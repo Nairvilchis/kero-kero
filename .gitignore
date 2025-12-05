@@ -1,0 +1,54 @@
+# Binarios
+/server
+/kero-kero
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Datos
+data/
+*.db
+*.db-shm
+*.db-wal
+kero-kero.db*
+kerokero_dev.db*
+
+# Configuración sensible
+.env
+.env.production
+.env.staging
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporal
+tmp/
+temp/
+*.tmp
+
+# QR codes generados
+qr_*.png
+*.qr
+
+# Coverage
+*.cover
+coverage.txt
+coverage.html
+
+# Vendor (si usas)
+vendor/
