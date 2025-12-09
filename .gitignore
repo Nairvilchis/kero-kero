@@ -20,6 +20,7 @@ kerokero_dev.db*
 .env
 .env.production
 .env.staging
+.env.local
 
 # Logs
 *.log
