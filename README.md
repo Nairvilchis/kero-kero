@@ -1,104 +1,289 @@
-# 🐸 Kero-Kero API
+# 🐸 Kero-Kero WhatsApp API
 
-**Tu puerta de entrada profesional a la automatización de WhatsApp.**
+API REST completa para gestionar múltiples instancias de WhatsApp usando `whatsmeow`.
 
-Kero-Kero es una API REST potente, escalable y fácil de usar que te permite integrar WhatsApp en tus aplicaciones, CRMs y sistemas de soporte. Construida con tecnología de vanguardia en Go, ofrece un rendimiento excepcional y una gestión robusta de múltiples sesiones.
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
----
+## Acerca de
 
-## ✨ Características Principales
+Kero-Kero es una API REST completa para gestionar múltiples instancias de WhatsApp usando `whatsmeow`. esta api se creo por mi necesidad de poder controlar yo mismo la informacion que recido al momento de recibir un mensaje o evento. actualmente estoy en una etapa de desarrollo y pruebas. pero me gustaria que este proyecto crezca con la comunidad. si tienes alguna sugerencia o encuentras un error, por favor, abre un issue.
 
-*   **🚀 Multi-Instancia:** Gestiona cientos de cuentas de WhatsApp desde un solo servidor.
-*   **💬 Mensajería Completa:** Envía texto, imágenes, videos, audios, documentos, ubicaciones y reacciones.
-*   **🤖 Automatización:** Webhooks en tiempo real para mensajes entrantes y eventos de estado.
-*   **👥 Gestión de Grupos:** Crea grupos, añade participantes y administra comunidades programáticamente.
-*   **🔒 Privacidad y Seguridad:** Control total sobre la configuración de privacidad y bloqueo de contactos.
-*   **📊 Encuestas:** Crea y gestiona encuestas nativas de WhatsApp.
-*   **🐳 Docker Ready:** Despliegue instantáneo con contenedores optimizados.
+Si encuentras útil Kero-Kero y deseas apoyar su desarrollo continuo, puedes explorar opciones y conocer más sobre mis proyectos en mi página oficial.
 
----
+[Mi Página Oficial](https://evansdev.servicioslasprimas.shop)
+
+
+## ✨ Características
+
+- 📱 **Multi-Instancia**: Crear, listar, conectar y desconectar múltiples cuentas de WhatsApp
+- 💬 **Mensajería Completa**: Texto, imágenes, videos, audio, documentos y ubicaciones
+- 👥 **Grupos**: Crear, gestionar participantes, obtener información
+- 📇 **Contactos**: Verificar números, obtener fotos de perfil, sincronizar contactos
+- 🔒 **Privacidad**: Configurar quién puede ver tu información
+- 🔔 **Webhooks**: Notificaciones en tiempo real de mensajes y eventos
+- 🚀 **Alto Rendimiento**: Arquitectura limpia con Go
+- 🐳 **Docker Ready**: Despliegue fácil con Docker Compose
+- 🔐 **Seguro**: Autenticación con API Key, rate limiting, CORS configurable
+
+## 🏗️ Arquitectura
+
+```
+kero-kero/
+├── cmd/
+│   └── server/          # Punto de entrada de la aplicación
+├── internal/
+│   ├── config/          # Configuración
+│   ├── handlers/        # Controladores HTTP
+│   ├── models/          # Modelos de datos
+│   ├── repository/      # Capa de datos (PostgreSQL, Redis)
+│   ├── routes/          # Definición de rutas
+│   ├── server/          # Middlewares
+│   ├── services/        # Lógica de negocio
+│   └── whatsapp/        # Cliente de WhatsApp
+├── pkg/
+│   ├── errors/          # Manejo de errores
+│   └── logger/          # Logging estructurado
+└── docs/                # Documentación
+```
 
 ## 🚀 Inicio Rápido
 
-La forma más sencilla de empezar es usando Docker Compose.
-
-### Requisitos
-*   Docker y Docker Compose instalados.
-
-### Pasos
-
-1.  **Clona el repositorio:**
-    ```bash
-    git clone https://github.com/tu-usuario/kero-kero.git
-    cd kero-kero
-    ```
-
-2.  **Inicia los servicios:**
-    ```bash
-    docker-compose up -d
-    ```
-
-3.  **¡Listo!** La API estará disponible en `http://localhost:8080`.
-
-### Autenticación
-
-Kero-Kero usa un sistema de autenticación dual:
-
-- **API Key**: Para acceso directo a la API (configurar en `.env`)
-- **JWT**: Para el dashboard (el usuario se autentica con API Key y recibe un token JWT)
-
-**Configurar las claves secretas** en tu archivo `.env.local`:
-
+### Opción 1: Docker (Recomendado)
+1.- **Clonar repositorio**
 ```bash
-# API Key para autenticación directa
-API_KEY=tu-clave-secreta-aqui
-
-# JWT Secret para tokens del dashboard
-JWT_SECRET=tu-secreto-jwt-aqui  # Generar con: openssl rand -base64 32
+git clone <repository-url>
+cd kero-kero
 ```
 
-⚠️ **Importante**: Cambia estas claves en producción por valores aleatorios y seguros.
+2.- **Configurar variables de entorno**
+```bash
+cp .env.example .env
+nano .env  # Editar valores
+```
 
----
+3.- **Iniciar servicios**
+```bash
+docker-compose up -d
+```
 
-## 📖 Uso Básico
+4.- **Verificar estado**
+```bash
+curl http://localhost:8080/health
+```
 
-### 1. Crear una Instancia
+### Opción 2: Local
+
+1.- **Requisitos: Go 1.21+, PostgreSQL, Redis**
+```bash
+go mod download
+cp .env.example .env
+```
+
+2.- **Ejecutar**
+```bash
+go run cmd/server/main.go
+```
+
+## 📚 Documentación
+
+- [📋 Endpoints de la API](docs/API_ENDPOINTS.md)
+
+
+## 🎯 Uso Básico
+
+### 1. Crear una instancia
+
 ```bash
 curl -X POST http://localhost:8080/instances \
+  -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"instance_id": "mi-empresa"}'
+  -d '{"instance_id": "mi-whatsapp"}'
 ```
 
-### 2. Obtener el QR para conectar
-```bash
-curl http://localhost:8080/instances/mi-empresa/qr --output qr.png
-```
-*Escanea el código QR generado con tu aplicación de WhatsApp.*
+### 2. Conectar y obtener QR
 
-### 3. Enviar un Mensaje
+1.- **Conectar**
 ```bash
-curl -X POST http://localhost:8080/instances/mi-empresa/messages/text \
+curl -X POST http://localhost:8080/instances/mi-whatsapp/connect \
+  -H "X-API-Key: your-api-key"
+```
+
+2.- **Obtener QR**
+```bash
+curl http://localhost:8080/instances/mi-whatsapp/qr \
+  -H "X-API-Key: your-api-key" \
+  --output qr.png
+```
+
+### 3. Enviar mensaje
+
+
+```bash
+curl -X POST http://localhost:8080/instances/mi-whatsapp/messages/text \
+  -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "phone": "5215512345678",
-    "message": "¡Hola desde Kero-Kero! 🐸"
+    "message": "¡Hola desde Kero-Kero!"
   }'
 ```
 
+### 4. Configurar webhook
+
+```bash
+curl -X POST http://localhost:8080/instances/mi-whatsapp/webhook \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://tu-servidor.com/webhook",
+    "events": ["message", "status"],
+    "secret": "tu-secreto"
+  }'
+```
+
+## 🛠️ Comandos Make
+
+```bash
+make help              # Ver todos los comandos disponibles
+make build             # Compilar aplicación
+make run               # Ejecutar localmente
+make test              # Ejecutar tests
+make docker-up         # Iniciar con Docker
+make docker-logs       # Ver logs
+make docker-down       # Detener servicios
+```
+
+## 📊 Endpoints Disponibles
+
+### Instancias
+- `POST /instances` - Crear instancia
+- `GET /instances` - Listar instancias
+- `GET /instances/{id}` - Obtener detalles
+- `DELETE /instances/{id}` - Eliminar instancia
+- `POST /instances/{id}/connect` - Conectar
+- `GET /instances/{id}/qr` - Obtener QR
+- `GET /instances/{id}/status` - Ver estado
+
+### Mensajes
+- `POST /instances/{id}/messages/text` - Enviar texto
+- `POST /instances/{id}/messages/image` - Enviar imagen
+- `POST /instances/{id}/messages/video` - Enviar video
+- `POST /instances/{id}/messages/audio` - Enviar audio
+- `POST /instances/{id}/messages/document` - Enviar documento
+- `POST /instances/{id}/messages/location` - Enviar ubicación
+
+### Grupos
+- `POST /instances/{id}/groups` - Crear grupo
+- `GET /instances/{id}/groups` - Listar grupos
+- `GET /instances/{id}/groups/{groupID}` - Info del grupo
+- `PATCH /instances/{id}/groups/{groupID}/participants` - Gestionar participantes
+
+### Contactos
+- `POST /instances/{id}/contacts/check` - Verificar números
+- `GET /instances/{id}/contacts` - Listar contactos
+- `GET /instances/{id}/contacts/profile-picture` - Foto de perfil
+
+### Privacidad
+- `GET /instances/{id}/privacy` - Obtener configuración
+- `PATCH /instances/{id}/privacy` - Actualizar configuración
+
+### Webhooks
+- `POST /instances/{id}/webhook` - Configurar webhook
+- `GET /instances/{id}/webhook` - Ver configuración
+- `DELETE /instances/{id}/webhook` - Eliminar webhook
+
+## 🔧 Configuración
+
+### Variables de Entorno
+
+```env
+# Aplicación
+APP_NAME=Kero-Kero
+APP_ENV=production
+APP_PORT=8080
+
+# Base de Datos
+DB_DRIVER=postgres
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=kerokero
+DB_USER=kerokero
+DB_PASSWORD=secret
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Seguridad
+API_KEY=your-secret-api-key
+
+# CORS
+CORS_ALLOWED_ORIGINS=*
+```
+
+### Health Check
+
+```bash
+curl http://localhost:8080/health
+```
+
+Respuesta:
+```json
+{
+  "status": "healthy",
+  "database": "ok",
+  "redis": "ok"
+}
+```
+
+### Logs
+
+```bash
+# Docker
+docker-compose logs -f api
+
+# Local
+tail -f logs/app.log
+```
+
+## 🔒 Seguridad
+
+- ✅ Autenticación con API Key
+- ✅ Rate limiting configurable
+- ✅ CORS configurable
+- ✅ Validación de entrada
+- ✅ Webhooks firmados con HMAC-SHA256
+- ✅ Logs de auditoría
+
+## 🤝 Contribuir
+
+Las contribuciones son bienvenidas. Por favor:
+
+1. Fork el proyecto
+2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
+3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push a la rama (`git push origin feature/AmazingFeature`)
+5. Abre un Pull Request
+
+## 📝 Licencia
+
+Este proyecto está bajo la Licencia MIT. Ver el archivo [LICENSE](LICENSE) para más detalles.
+
+## 🆘 Soporte
+
+- 📧 Email: kerokero+nairvilchis@gmail.com
+- 📖 Documentación: [docs/](docs/)
+
+## 🙏 Agradecimientos
+
+- [whatsmeow](https://github.com/tulir/whatsmeow) - Cliente de WhatsApp
+- [chi](https://github.com/go-chi/chi) - Router HTTP
+- [zerolog](https://github.com/rs/zerolog) - Logger estructurado
+
 ---
 
-## 📚 Documentación Técnica
-
-Para una guía profunda sobre la arquitectura, configuración avanzada, referencia completa de endpoints y esquemas de base de datos, consulta nuestra documentación técnica:
-
-👉 **[Documentación Técnica Completa](docs/TECHNICAL_DOCUMENTATION.md)**
-
-### Guías Específicas
-
-- **[Sistema de Autenticación JWT](docs/autenticacion-jwt.md)** - Cómo funciona el login y la seguridad
-
----
 
 ## 🛠️ Stack Tecnológico
 
@@ -109,6 +294,5 @@ Para una guía profunda sobre la arquitectura, configuración avanzada, referenc
 
 ---
 
-## 📄 Licencia
 
-Este proyecto está bajo la licencia MIT.
+Hecho con ❤️ y Go

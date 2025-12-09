@@ -281,13 +281,3 @@ curl -X PUT http://localhost:8080/instances/mi-instancia/calls/settings \
 ✅ Manejo de errores estandarizado  
 
 ---
-
-## 📦 Próximas Mejoras
-
-- [ ] Documentación Swagger/OpenAPI
-- [ ] Tests unitarios y de integración
-- [ ] Métricas y monitoreo (Prometheus)
-- [ ] Soporte para stickers
-- [ ] Envío de mensajes programados
-- [ ] Respuestas automáticas
-- [ ] Dockerización completa
