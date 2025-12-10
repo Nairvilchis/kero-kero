@@ -3,10 +3,16 @@ package services
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
@@ -95,60 +101,205 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 	}, nil
 }
 
+// helperDownloadMediaBytes descarga o decodifica los bytes del medio
+func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, string, error) {
+	// 1. Verificar si es Data URI (Base64)
+	if strings.HasPrefix(mediaSource, "data:") {
+		parts := strings.Split(mediaSource, ",")
+		if len(parts) != 2 {
+			return nil, "", fmt.Errorf("data uri inválida")
+		}
+		// Extraer mime type: data:image/jpeg;base64
+		mimeParts := strings.Split(parts[0], ";")
+		mimeType := strings.TrimPrefix(mimeParts[0], "data:")
+
+		data, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil, "", fmt.Errorf("error decodificando base64: %v", err)
+		}
+		return data, mimeType, nil
+	}
+
+	// 2. Verificar si es URL válida
+	if _, err := url.ParseRequestURI(mediaSource); err != nil {
+		return nil, "", fmt.Errorf("url inválida y no es data uri")
+	}
+
+	// 3. Descargar desde URL
+	resp, err := http.Get(mediaSource)
+	if err != nil {
+		return nil, "", fmt.Errorf("error descargando media: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("error descarga status: %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("error leyendo body: %v", err)
+	}
+
+	mimeType := resp.Header.Get("Content-Type")
+	return data, mimeType, nil
+}
+
 // SendImage envía una imagen
 func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, errors.ErrInstanceNotFound
-	}
-
-	if !client.WAClient.IsLoggedIn() {
+	if client == nil || !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	return nil, errors.New(501, "Envío de imágenes no implementado aún")
+	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if err != nil {
+		return nil, errors.ErrBadRequest.WithDetails(err.Error())
+	}
+
+	uploaded, err := client.WAClient.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo imagen: %v", err))
+	}
+
+	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	msg := &waProto.Message{
+		ImageMessage: &waProto.ImageMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			Caption:       proto.String(req.Caption),
+		},
+	}
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando imagen: %v", err))
+	}
+
+	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
 
 // SendVideo envía un video
 func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, errors.ErrInstanceNotFound
-	}
-
-	if !client.WAClient.IsLoggedIn() {
+	if client == nil || !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	return nil, errors.New(501, "Envío de videos no implementado aún")
+	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if err != nil {
+		return nil, errors.ErrBadRequest.WithDetails(err.Error())
+	}
+
+	uploaded, err := client.WAClient.Upload(ctx, data, whatsmeow.MediaVideo)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo video: %v", err))
+	}
+
+	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	msg := &waProto.Message{
+		VideoMessage: &waProto.VideoMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			Caption:       proto.String(req.Caption),
+		},
+	}
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando video: %v", err))
+	}
+
+	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
 
-// SendAudio envía un audio
+// SendAudio envía un audio (nota de voz o audio general)
 func (s *MessageService) SendAudio(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, errors.ErrInstanceNotFound
-	}
-
-	if !client.WAClient.IsLoggedIn() {
+	if client == nil || !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	return nil, errors.New(501, "Envío de audios no implementado aún")
+	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if err != nil {
+		return nil, errors.ErrBadRequest.WithDetails(err.Error())
+	}
+
+	uploaded, err := client.WAClient.Upload(ctx, data, whatsmeow.MediaAudio)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo audio: %v", err))
+	}
+
+	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	msg := &waProto.Message{
+		AudioMessage: &waProto.AudioMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			PTT:           proto.Bool(true), // Por defecto como nota de voz
+		},
+	}
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando audio: %v", err))
+	}
+
+	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
 
 // SendDocument envía un documento
 func (s *MessageService) SendDocument(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, errors.ErrInstanceNotFound
-	}
-
-	if !client.WAClient.IsLoggedIn() {
+	if client == nil || !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	return nil, errors.New(501, "Envío de documentos no implementado aún")
+	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if err != nil {
+		return nil, errors.ErrBadRequest.WithDetails(err.Error())
+	}
+
+	uploaded, err := client.WAClient.Upload(ctx, data, whatsmeow.MediaDocument)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo documento: %v", err))
+	}
+
+	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	msg := &waProto.Message{
+		DocumentMessage: &waProto.DocumentMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			Caption:       proto.String(req.Caption),
+			FileName:      proto.String(req.FileName),
+		},
+	}
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando documento: %v", err))
+	}
+
+	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
 
 // SendLocation envía una ubicación
@@ -195,6 +346,30 @@ func (s *MessageService) SendLocation(ctx context.Context, instanceID string, re
 		MessageID: resp.ID,
 		Status:    string(models.MessageStatusSent),
 	}, nil
+}
+
+// SendContact envía un contacto (vCard)
+func (s *MessageService) SendContact(ctx context.Context, instanceID string, req *models.SendContactRequest) (*models.MessageResponse, error) {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil || !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+
+	msg := &waProto.Message{
+		ContactMessage: &waProto.ContactMessage{
+			DisplayName: proto.String(req.DisplayName),
+			Vcard:       proto.String(req.VCard),
+		},
+	}
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando contacto: %v", err))
+	}
+
+	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
 
 // ReactToMessage reacciona a un mensaje

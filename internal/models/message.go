@@ -65,6 +65,13 @@ type SendLocationRequest struct {
 	Address   string  `json:"address,omitempty"`
 }
 
+// SendContactRequest representa la solicitud para enviar un contacto
+type SendContactRequest struct {
+	Phone       string `json:"phone" validate:"required"`
+	DisplayName string `json:"display_name" validate:"required"`
+	VCard       string `json:"vcard" validate:"required"`
+}
+
 // ReactionRequest representa la solicitud para reaccionar a un mensaje
 type ReactionRequest struct {
 	Phone     string `json:"phone" validate:"required"`

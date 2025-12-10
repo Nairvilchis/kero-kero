@@ -175,6 +175,35 @@ func (h *MessageHandler) SendLocation(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// SendContact maneja POST /instances/{instanceID}/messages/contact
+func (h *MessageHandler) SendContact(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+
+	var req models.SendContactRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	if req.Phone == "" || req.VCard == "" {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("phone y vcard son requeridos"))
+		return
+	}
+
+	response, err := h.service.SendContact(r.Context(), instanceID, &req)
+	if err != nil {
+		if appErr, ok := err.(*errors.AppError); ok {
+			errors.WriteJSON(w, appErr)
+		} else {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails(err.Error()))
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 // React maneja POST /instances/{instanceID}/messages/react
 func (h *MessageHandler) React(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
