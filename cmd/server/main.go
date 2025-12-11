@@ -123,7 +123,7 @@ func main() {
 	// Handlers HTTP
 	authHandler := handlers.NewAuthHandler(authService)
 	instanceHandler := handlers.NewInstanceHandler(instanceService)
-	messageHandler := handlers.NewMessageHandler(messageService)
+	messageHandler := handlers.NewMessageHandler(messageService, queueService)
 	groupHandler := handlers.NewGroupHandler(groupService)
 	contactHandler := handlers.NewContactHandler(contactService)
 	presenceHandler := handlers.NewPresenceHandler(presenceService) // Nuevo handler de presencia

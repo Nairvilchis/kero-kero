@@ -16,6 +16,8 @@ Este documento registra los cambios, correcciones y mejoras realizadas en el ser
 - **Estado de Conexión en Redis**: Se implementó la sincronización del estado de las instancias (`connected`, `authenticated`, `disconnected`) en Redis.
   - Esto permite que cualquier nodo del cluster conozca el estado real de una instancia, independientemente de qué nodo la esté gestionando inicialmente.
   - Se refactorizó `InstanceService.GetStatus` para priorizar la consulta a Redis sobre la memoria local, paso fundamental para escalar horizontalmente.
-- **Cola de Mensajería Asíncrona**: Se implementó un sistema de workers para el envío de mensajes.
-  - Los mensajes ahora pueden ser procesados en segundo plano `QueueService`, desacoplando la recepción de la petición HTTP del proceso de envío real en WhatsApp.
-  - Esto mejora la resiliencia y evita bloqueos en el servidor web si la red de WhatsApp está lenta.
+- **Cola de Mensajería Asíncrona (Sistema Híbrido)**: Se implementó un sistema flexible de workers para el envío de mensajes.
+  - **Por defecto (Síncrono):** Los endpoints mantienen su comportamiento original, esperando confirmación de WhatsApp antes de responder. Esto garantiza certeza del envío para flujos críticos (N8N, chatbots, notificaciones transaccionales).
+  - **Modo Asíncrono Opcional:** Al incluir el header `X-Async: true` en la petición, el mensaje se encola en Redis y se procesa en segundo plano por workers dedicados. El servidor responde inmediatamente con `202 Accepted` y un ID de cola.
+  - **Casos de uso:** El modo asíncrono es ideal para envíos masivos (newsletters, avisos grupales) donde la velocidad es prioritaria sobre la confirmación inmediata.
+  - Endpoints soportados: `/messages/text`, `/messages/image`, `/messages/video`, `/messages/audio`, `/messages/document`, `/messages/location`.

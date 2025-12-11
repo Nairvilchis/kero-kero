@@ -13,12 +13,16 @@ import (
 
 // MessageHandler maneja las peticiones HTTP de mensajes
 type MessageHandler struct {
-	service *services.MessageService
+	service      *services.MessageService
+	queueService *services.QueueService
 }
 
 // NewMessageHandler crea un nuevo handler de mensajes
-func NewMessageHandler(service *services.MessageService) *MessageHandler {
-	return &MessageHandler{service: service}
+func NewMessageHandler(service *services.MessageService, queueService *services.QueueService) *MessageHandler {
+	return &MessageHandler{
+		service:      service,
+		queueService: queueService,
+	}
 }
 
 // SendText maneja POST /instances/{instanceID}/messages/text
@@ -33,6 +37,24 @@ func (h *MessageHandler) SendText(w http.ResponseWriter, r *http.Request) {
 
 	if req.Phone == "" || req.Message == "" {
 		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("phone y message son requeridos"))
+		return
+	}
+
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeText, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
 		return
 	}
 
@@ -60,6 +82,23 @@ func (h *MessageHandler) SendImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeImage, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
+		return
+	}
+
 	response, err := h.service.SendImage(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
@@ -81,6 +120,23 @@ func (h *MessageHandler) SendVideo(w http.ResponseWriter, r *http.Request) {
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeVideo, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
 		return
 	}
 
@@ -108,6 +164,23 @@ func (h *MessageHandler) SendAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeAudio, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
+		return
+	}
+
 	response, err := h.service.SendAudio(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
@@ -129,6 +202,23 @@ func (h *MessageHandler) SendDocument(w http.ResponseWriter, r *http.Request) {
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeDocument, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
 		return
 	}
 
@@ -158,6 +248,23 @@ func (h *MessageHandler) SendLocation(w http.ResponseWriter, r *http.Request) {
 
 	if req.Phone == "" {
 		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("phone es requerido"))
+		return
+	}
+
+	// Verificar si se solicitó envío asíncrono
+	if r.Header.Get("X-Async") == "true" {
+		msgID, err := h.queueService.EnqueueMessage(r.Context(), instanceID, models.MessageTypeLocation, req)
+		if err != nil {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails("Error encolando mensaje: "+err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":    true,
+			"message_id": msgID,
+			"status":     "queued",
+		})
 		return
 	}
 
