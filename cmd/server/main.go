@@ -57,14 +57,22 @@ func main() {
 	webhookRepo := repository.NewWebhookRepository(redisClient)
 	msgRepo := repository.NewMessageRepository(db)
 
-	// Inicializar contenedor de WhatsApp (SQLite por defecto)
-	// WhatsApp siempre usa SQLite, independientemente del driver de la BD principal
-	waDSN := "file:./data/whatsmeow.db?_foreign_keys=on"
-	if cfg.Database.Driver == "sqlite" {
-		// Si ya estamos usando SQLite, reutilizamos la misma base de datos
-		waDSN = cfg.GetDSN() + "?_foreign_keys=on"
+	// Inicializar contenedor de WhatsApp
+	var waContainer *sqlstore.Container
+
+	if cfg.Database.Driver == "postgres" {
+		log.Info().Msg("Usando PostgreSQL para el almacenamiento de sesiones de WhatsApp")
+		// Configurar para PostgreSQL
+		waContainer, err = sqlstore.New(context.Background(), "postgres", cfg.GetDSN(), waLog.Stdout("WA-Store", "INFO", true))
+	} else {
+		// Configurar para SQLite (comportamiento por defecto)
+		waDSN := "file:./data/whatsmeow.db?_foreign_keys=on"
+		if cfg.Database.Driver == "sqlite" {
+			waDSN = cfg.GetDSN() + "?_foreign_keys=on"
+		}
+		waContainer, err = sqlstore.New(context.Background(), "sqlite3", waDSN, waLog.Stdout("WA-Store", "INFO", true))
 	}
-	waContainer, err := sqlstore.New(context.Background(), "sqlite3", waDSN, waLog.Stdout("WA-Store", "INFO", true))
+
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error inicializando WhatsApp store")
 	}
@@ -101,6 +109,11 @@ func main() {
 
 	// Iniciar Scheduler de automatización
 	automationService.StartScheduler()
+
+	// Servicio de Cola (Workers)
+	queueService := services.NewQueueService(redisClient, messageService)
+	queueService.Start()
+	defer queueService.Stop()
 
 	// Configurar servicios en el manager
 	waManager.SetWebhookService(webhookService)

@@ -146,6 +146,26 @@ func (r *RedisClient) GetQueueLength(ctx context.Context, queueName string) (int
 	return r.Client.LLen(ctx, queueName).Result()
 }
 
+// --- Métodos para Status ---
+
+// SetInstanceStatus almacena el estado de conexión de una instancia
+func (r *RedisClient) SetInstanceStatus(ctx context.Context, instanceID, status string) error {
+	key := fmt.Sprintf("instance:%s:status", instanceID)
+	// Sin expiración, ya que representa el estado actual.
+	// Se debe actualizar explícitamente a "disconnected" cuando sea necesario.
+	return r.Set(ctx, key, status, 0)
+}
+
+// GetInstanceStatus obtiene el estado de conexión de una instancia
+func (r *RedisClient) GetInstanceStatus(ctx context.Context, instanceID string) (string, error) {
+	key := fmt.Sprintf("instance:%s:status", instanceID)
+	val, err := r.Get(ctx, key)
+	if err == redis.Nil {
+		return "disconnected", nil // Default si no hay clave
+	}
+	return val, err
+}
+
 // --- Métodos para Rate Limiting (adicional) ---
 
 // IncrementCounter incrementa un contador con expiración

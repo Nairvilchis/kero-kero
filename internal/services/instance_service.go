@@ -159,9 +159,17 @@ func (s *InstanceService) ConnectInstance(ctx context.Context, instanceID string
 		return errors.ErrInternalServer.WithDetails(err.Error())
 	}
 
-	// Verificar si ya está conectado
+	// He modificado esta lógica para arreglar el problema de las sesiones "zombies".
+	// Antes, si el socket estaba conectado pero no habíamos escaneado el QR, nos devolvía un OK falso.
+	// Ahora compruebo explícitamente si estamos logueados.
+	if client.WAClient.IsConnected() && client.WAClient.IsLoggedIn() {
+		return nil // Todo en orden, ya estamos dentro.
+	}
+
+	// Si llegamos aquí y resulta que el socket sigue conectado (pero no logueado),
+	// es mejor desconectar para limpiar el estado y dejar que el proceso de abajo genere un QR limpio.
 	if client.WAClient.IsConnected() {
-		return nil // Ya está conectado
+		client.Disconnect()
 	}
 
 	// Actualizar estado
@@ -264,27 +272,36 @@ func (s *InstanceService) GetQRCode(ctx context.Context, instanceID string) ([]b
 }
 
 // GetStatus obtiene el estado de una instancia
+// GetStatus obtiene el estado de una instancia
 func (s *InstanceService) GetStatus(ctx context.Context, instanceID string) (string, error) {
-	client := s.waManager.GetClient(instanceID)
-	if client == nil {
+	// 1. Verificar si la instancia existe en base de datos
+	exists, err := s.instanceRepo.Exists(ctx, instanceID)
+	if err != nil {
+		return "", errors.ErrInternalServer.WithDetails(err.Error())
+	}
+	if !exists {
 		return "", errors.ErrInstanceNotFound
 	}
 
-	status := string(models.StatusDisconnected)
-	if client.WAClient.IsConnected() {
-		status = string(models.StatusConnected)
-	}
-	if client.WAClient.IsLoggedIn() {
-		status = string(models.StatusAuthenticated)
+	// 2. Intentar obtener el estado en tiempo real desde Redis (Arquitectura Stateless)
+	status, err := s.redisClient.GetInstanceStatus(ctx, instanceID)
+	if err == nil && status != "" && status != "disconnected" {
+		return status, nil
 	}
 
-	// Actualizar en base de datos si es diferente
-	instance, _ := s.instanceRepo.GetByID(ctx, instanceID)
-	if instance != nil && instance.Status != status {
-		s.instanceRepo.UpdateStatus(ctx, instanceID, models.InstanceStatus(status))
+	// 3. Fallback: Verificar memoria local (útil si Redis falló o hay latencia)
+	client := s.waManager.GetClient(instanceID)
+	if client != nil {
+		if client.WAClient.IsLoggedIn() {
+			return string(models.StatusAuthenticated), nil
+		}
+		if client.WAClient.IsConnected() {
+			return string(models.StatusConnected), nil
+		}
 	}
 
-	return status, nil
+	// 4. Si no está en Redis ni en memoria local activa, asumimos desconectado
+	return string(models.StatusDisconnected), nil
 }
 
 // UpdateInstance actualiza la configuración de una instancia

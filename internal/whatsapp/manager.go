@@ -289,10 +289,12 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando JID")
 		}
 
-		// Actualizar estado
+		// Actualizar estado en DB
 		if err := m.instanceRepo.UpdateStatus(bgCtx, instanceID, models.StatusAuthenticated); err != nil {
 			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado")
 		}
+		// Sincronizar estado en Redis
+		m.redisClient.SetInstanceStatus(bgCtx, instanceID, string(models.StatusAuthenticated))
 
 		// Actualizar última conexión
 		if err := m.instanceRepo.UpdateLastConnected(bgCtx, instanceID); err != nil {
@@ -310,7 +312,11 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 	case *events.Connected:
 		bgCtx := context.Background()
 		if err := m.instanceRepo.UpdateStatus(bgCtx, instanceID, models.StatusConnected); err != nil {
-			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado")
+			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado en DB")
+		}
+		// Sincronizar estado en Redis
+		if err := m.redisClient.SetInstanceStatus(bgCtx, instanceID, string(models.StatusConnected)); err != nil {
+			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado en Redis")
 		}
 		log.Info().Str("instance_id", instanceID).Msg("Instancia conectada")
 
@@ -334,8 +340,10 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 	case *events.Disconnected:
 		bgCtx := context.Background()
 		if err := m.instanceRepo.UpdateStatus(bgCtx, instanceID, models.StatusDisconnected); err != nil {
-			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado")
+			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado en DB")
 		}
+		// Sincronizar estado en Redis
+		m.redisClient.SetInstanceStatus(bgCtx, instanceID, string(models.StatusDisconnected))
 		log.Info().Str("instance_id", instanceID).Msg("Instancia desconectada")
 
 		// Enviar webhook de estado
@@ -359,6 +367,8 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 		if err := m.instanceRepo.UpdateStatus(ctx, instanceID, models.StatusDisconnected); err != nil {
 			log.Error().Err(err).Str("instance_id", instanceID).Msg("Error actualizando estado")
 		}
+		// Sincronizar estado en Redis
+		m.redisClient.SetInstanceStatus(ctx, instanceID, string(models.StatusDisconnected))
 		log.Info().Str("instance_id", instanceID).Msg("Instancia cerró sesión")
 
 		// Enviar webhook de estado
