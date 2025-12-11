@@ -58,11 +58,3 @@ type ReceiptEvent struct {
 	Timestamp int64    `json:"timestamp"`
 	IDs       []string `json:"ids,omitempty"`
 }
-
-// MessageAckEvent es el evento de confirmación para un mensaje enviado de forma asíncrona.
-type MessageAckEvent struct {
-	Status        string `json:"status"` // "sent" o "failed"
-	CorrelationID string `json:"correlation_id"`
-	MessageID     string `json:"message_id,omitempty"` // ID de WhatsApp, solo en caso de éxito
-	Error         string `json:"error,omitempty"`      // Razón del fallo, solo en caso de error
-}

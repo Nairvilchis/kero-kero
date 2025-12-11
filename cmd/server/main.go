@@ -82,7 +82,7 @@ func main() {
 	authService := services.NewAuthService(cfg.Security.JWTSecret, cfg.Security.APIKey)
 	webhookService := services.NewWebhookService(webhookRepo)
 	instanceService := services.NewInstanceService(waManager, instanceRepo, redisClient, webhookService)
-	messageService := services.NewMessageService(waManager, msgRepo, redisClient)
+	messageService := services.NewMessageService(waManager, msgRepo)
 	groupService := services.NewGroupService(waManager)
 	contactService := services.NewContactService(waManager)
 	presenceService := services.NewPresenceService(waManager) // Nuevo servicio de presencia
@@ -95,13 +95,12 @@ func main() {
 	crmService := services.NewCRMService()
 	syncService := services.NewSyncService(waManager, msgRepo, chatService)
 
-	// Iniciar servicios en segundo plano
+	// Iniciar servicio WebSocket
+	// Iniciar servicio WebSocket
 	go wsService.Run()
-	automationService.StartScheduler()
 
-	// Crear e iniciar el Queue Worker
-	queueWorker := services.NewQueueWorker(redisClient, messageService, webhookService)
-	queueWorker.Start()
+	// Iniciar Scheduler de automatización
+	automationService.StartScheduler()
 
 	// Configurar servicios en el manager
 	waManager.SetWebhookService(webhookService)

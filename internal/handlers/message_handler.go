@@ -24,7 +24,6 @@ func NewMessageHandler(service *services.MessageService) *MessageHandler {
 // SendText maneja POST /instances/{instanceID}/messages/text
 func (h *MessageHandler) SendText(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	isAsync := r.Header.Get("X-Async") == "true"
 
 	var req models.SendTextRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,7 +36,7 @@ func (h *MessageHandler) SendText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.service.SendText(r.Context(), instanceID, &req, isAsync)
+	response, err := h.service.SendText(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -48,16 +47,12 @@ func (h *MessageHandler) SendText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if isAsync {
-		w.WriteHeader(http.StatusAccepted)
-	}
 	json.NewEncoder(w).Encode(response)
 }
 
 // SendImage maneja POST /instances/{instanceID}/messages/image
 func (h *MessageHandler) SendImage(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	isAsync := r.Header.Get("X-Async") == "true"
 
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -65,7 +60,7 @@ func (h *MessageHandler) SendImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.service.SendImage(r.Context(), instanceID, &req, isAsync)
+	response, err := h.service.SendImage(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -76,16 +71,12 @@ func (h *MessageHandler) SendImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if isAsync {
-		w.WriteHeader(http.StatusAccepted)
-	}
 	json.NewEncoder(w).Encode(response)
 }
 
 // SendVideo maneja POST /instances/{instanceID}/messages/video
 func (h *MessageHandler) SendVideo(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	isAsync := r.Header.Get("X-Async") == "true"
 
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -93,7 +84,7 @@ func (h *MessageHandler) SendVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.service.SendVideo(r.Context(), instanceID, &req, isAsync)
+	response, err := h.service.SendVideo(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -104,16 +95,12 @@ func (h *MessageHandler) SendVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if isAsync {
-		w.WriteHeader(http.StatusAccepted)
-	}
 	json.NewEncoder(w).Encode(response)
 }
 
 // SendAudio maneja POST /instances/{instanceID}/messages/audio
 func (h *MessageHandler) SendAudio(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	isAsync := r.Header.Get("X-Async") == "true"
 
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -121,7 +108,7 @@ func (h *MessageHandler) SendAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.service.SendAudio(r.Context(), instanceID, &req, isAsync)
+	response, err := h.service.SendAudio(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -132,16 +119,12 @@ func (h *MessageHandler) SendAudio(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if isAsync {
-		w.WriteHeader(http.StatusAccepted)
-	}
 	json.NewEncoder(w).Encode(response)
 }
 
 // SendDocument maneja POST /instances/{instanceID}/messages/document
 func (h *MessageHandler) SendDocument(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	isAsync := r.Header.Get("X-Async") == "true"
 
 	var req models.SendMediaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -149,7 +132,7 @@ func (h *MessageHandler) SendDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.service.SendDocument(r.Context(), instanceID, &req, isAsync)
+	response, err := h.service.SendDocument(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -160,9 +143,6 @@ func (h *MessageHandler) SendDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if isAsync {
-		w.WriteHeader(http.StatusAccepted)
-	}
 	json.NewEncoder(w).Encode(response)
 }
 

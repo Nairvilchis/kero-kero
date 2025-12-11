@@ -105,12 +105,6 @@ type MessageResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// QueuedResponse es la respuesta para una operación de mensaje que ha sido encolada.
-type QueuedResponse struct {
-	Status        string `json:"status"`
-	CorrelationID string `json:"correlation_id"`
-}
-
 // SendTextWithTypingRequest solicitud para enviar texto con simulación de escritura
 type SendTextWithTypingRequest struct {
 	Phone          string `json:"phone" validate:"required"`
