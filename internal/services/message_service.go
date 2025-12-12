@@ -21,6 +21,8 @@ import (
 	"kero-kero/internal/repository"
 	"kero-kero/internal/whatsapp"
 	"kero-kero/pkg/errors"
+	"kero-kero/pkg/helpers"
+	"kero-kero/pkg/validators"
 )
 
 // ... (resto del código)
@@ -48,7 +50,13 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	msg := &waProto.Message{
 		Conversation: proto.String(req.Message),
@@ -59,11 +67,11 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 		log.Error().
 			Err(err).
 			Str("instance_id", instanceID).
-			Str("recipient", req.Phone).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 			Msg("Error enviando mensaje")
 
-		if err.Error() == "database is locked" ||
-			err.Error() == "failed to prefetch sessions: database is locked" {
+		// Usar helper para detectar errores de database locked
+		if helpers.IsDatabaseLockedError(err) {
 			return nil, errors.ErrDatabaseLocked
 		}
 
@@ -73,7 +81,7 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 	// Guardar mensaje en base de datos
 	message := &models.Message{
 		ID:         resp.ID,
-		InstanceID: instanceID, // Necesitamos agregar esto al modelo Message si no está
+		InstanceID: instanceID,
 		To:         recipientJID.String(),
 		From:       "me",
 		Content:    req.Message,
@@ -90,7 +98,7 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 
 	log.Info().
 		Str("instance_id", instanceID).
-		Str("recipient", req.Phone).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 		Str("message_id", resp.ID).
 		Msg("Mensaje enviado exitosamente")
 
@@ -102,7 +110,11 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 }
 
 // helperDownloadMediaBytes descarga o decodifica los bytes del medio
+// Incluye validaciones de seguridad: límite de tamaño y prevención de SSRF
 func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, string, error) {
+	// Límite de tamaño: 50MB (ajustable según necesidades)
+	const maxSize = 50 * 1024 * 1024 // 50MB
+
 	// 1. Verificar si es Data URI (Base64)
 	if strings.HasPrefix(mediaSource, "data:") {
 		parts := strings.Split(mediaSource, ",")
@@ -117,6 +129,12 @@ func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, s
 		if err != nil {
 			return nil, "", fmt.Errorf("error decodificando base64: %v", err)
 		}
+
+		// Verificar tamaño del archivo decodificado
+		if len(data) > maxSize {
+			return nil, "", errors.New(413, fmt.Sprintf("Archivo demasiado grande (máximo %dMB)", maxSize/(1024*1024)))
+		}
+
 		return data, mimeType, nil
 	}
 
@@ -125,8 +143,18 @@ func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, s
 		return nil, "", fmt.Errorf("url inválida y no es data uri")
 	}
 
-	// 3. Descargar desde URL
-	resp, err := http.Get(mediaSource)
+	// 3. Validar URL para prevenir SSRF
+	// Importar: "kero-kero/pkg/validators"
+	if err := validators.ValidateMediaURL(mediaSource); err != nil {
+		return nil, "", err
+	}
+
+	// 4. Descargar desde URL con timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second, // Timeout de 30 segundos
+	}
+
+	resp, err := client.Get(mediaSource)
 	if err != nil {
 		return nil, "", fmt.Errorf("error descargando media: %v", err)
 	}
@@ -136,9 +164,21 @@ func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, s
 		return nil, "", fmt.Errorf("error descarga status: %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// 5. Verificar Content-Length si está disponible
+	if resp.ContentLength > maxSize {
+		return nil, "", errors.New(413, fmt.Sprintf("Archivo demasiado grande (máximo %dMB)", maxSize/(1024*1024)))
+	}
+
+	// 6. Usar LimitReader para prevenir lecturas excesivas
+	limitedReader := io.LimitReader(resp.Body, maxSize+1)
+	data, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, "", fmt.Errorf("error leyendo body: %v", err)
+	}
+
+	// 7. Verificar que no excedió el límite
+	if len(data) > maxSize {
+		return nil, "", errors.New(413, fmt.Sprintf("Archivo demasiado grande (máximo %dMB)", maxSize/(1024*1024)))
 	}
 
 	mimeType := resp.Header.Get("Content-Type")
@@ -152,6 +192,12 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrNotAuthenticated
 	}
 
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
 	if err != nil {
 		return nil, errors.ErrBadRequest.WithDetails(err.Error())
@@ -162,7 +208,7 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo imagen: %v", err))
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 	msg := &waProto.Message{
 		ImageMessage: &waProto.ImageMessage{
 			URL:           proto.String(uploaded.URL),
@@ -178,8 +224,24 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando imagen")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
+
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando imagen: %v", err))
 	}
+
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("message_id", resp.ID).
+		Msg("Imagen enviada exitosamente")
 
 	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
@@ -189,6 +251,12 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 	client := s.waManager.GetClient(instanceID)
 	if client == nil || !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
+	}
+
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
 	}
 
 	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
@@ -201,7 +269,7 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo video: %v", err))
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 	msg := &waProto.Message{
 		VideoMessage: &waProto.VideoMessage{
 			URL:           proto.String(uploaded.URL),
@@ -217,8 +285,24 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando video")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
+
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando video: %v", err))
 	}
+
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("message_id", resp.ID).
+		Msg("Video enviado exitosamente")
 
 	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
 }
