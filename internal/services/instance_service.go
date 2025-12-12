@@ -218,14 +218,37 @@ func (s *InstanceService) DisconnectInstance(ctx context.Context, instanceID str
 }
 
 // GetQRCode obtiene el código QR de una instancia
+// Si la instancia no está conectada, inicia la conexión automáticamente
 func (s *InstanceService) GetQRCode(ctx context.Context, instanceID string) ([]byte, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
 
+	// Si ya está autenticado, no necesita QR
 	if client.WAClient.IsLoggedIn() {
 		return nil, errors.New(400, "La instancia ya está autenticada")
+	}
+
+	// Si NO está conectado, iniciar conexión automáticamente
+	if !client.WAClient.IsConnected() {
+		log.Info().Str("instance_id", instanceID).Msg("Instancia no conectada, iniciando conexión automática para generar QR")
+
+		// Actualizar estado a connecting
+		if err := s.instanceRepo.UpdateStatus(ctx, instanceID, models.StatusConnecting); err != nil {
+			log.Error().Err(err).Msg("Error actualizando estado")
+		}
+
+		// Conectar en goroutine para no bloquear
+		go func() {
+			if err := client.Connect(); err != nil {
+				log.Error().Err(err).Str("instance_id", instanceID).Msg("Error conectando instancia")
+				s.instanceRepo.UpdateStatus(context.Background(), instanceID, models.StatusFailed)
+			}
+		}()
+
+		// Dar un momento para que inicie la conexión
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Intentar obtener de Redis con reintentos (el QR puede tardar en guardarse)
@@ -264,7 +287,7 @@ func (s *InstanceService) GetQRCode(ctx context.Context, instanceID string) ([]b
 		return nil, errors.New(503, "QR no disponible: "+evt.Event)
 
 	case <-time.After(25 * time.Second): // Reducido a 25s para dar tiempo a los reintentos
-		return nil, errors.New(408, "Timeout esperando código QR")
+		return nil, errors.New(408, "Timeout esperando código QR. Intenta nuevamente en unos segundos.")
 
 	case <-ctx.Done():
 		return nil, errors.New(499, "Request cancelado")
