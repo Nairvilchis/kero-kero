@@ -258,3 +258,49 @@ func (h *GroupHandler) RevokeInviteLink(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+// Join maneja POST /instances/{instanceID}/groups/join
+func (h *GroupHandler) Join(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+
+	var req models.JoinGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	if req.InviteCode == "" {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("invite_code es requerido"))
+		return
+	}
+
+	resp, err := h.service.JoinGroup(r.Context(), instanceID, &req)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// UpdateGroupPicture maneja PUT /instances/{instanceID}/groups/{groupID}/picture
+func (h *GroupHandler) UpdateGroupPicture(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+	groupID := chi.URLParam(r, "groupID")
+
+	var req models.UpdateGroupPictureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	err := h.service.UpdateGroupPicture(r.Context(), instanceID, groupID, &req)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}

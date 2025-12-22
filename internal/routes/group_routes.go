@@ -9,11 +9,14 @@ import (
 func SetupGroupRoutes(r chi.Router, handler *handlers.GroupHandler) {
 	r.Route("/instances/{instanceID}/groups", func(r chi.Router) {
 		// Gestión básica de grupos
-		r.Post("/", handler.CreateGroup)               // Crear grupo
-		r.Get("/", handler.ListGroups)                 // Listar grupos
-		r.Get("/{groupID}", handler.GetGroupInfo)      // Info del grupo
-		r.Put("/{groupID}", handler.UpdateGroupInfo)   // Actualizar nombre/descripción
-		r.Post("/{groupID}/leave", handler.LeaveGroup) // Salir del grupo
+		r.Post("/", handler.CreateGroup) // Crear grupo
+		r.Post("/join", handler.Join)    // Unirse vía link
+		r.Get("/", handler.ListGroups)   // Listar grupos
+
+		r.Get("/{groupID}", handler.GetGroupInfo)               // Info del grupo
+		r.Put("/{groupID}", handler.UpdateGroupInfo)            // Actualizar nombre/descripción
+		r.Put("/{groupID}/picture", handler.UpdateGroupPicture) // Actualizar foto de perfil
+		r.Post("/{groupID}/leave", handler.LeaveGroup)          // Salir del grupo
 
 		// Gestión de participantes
 		r.Post("/{groupID}/participants", handler.AddParticipants)      // Agregar participantes

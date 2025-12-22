@@ -10,6 +10,7 @@ import (
 	"kero-kero/internal/models"
 	"kero-kero/internal/whatsapp"
 	"kero-kero/pkg/errors"
+	"time"
 )
 
 type PrivacyService struct {
@@ -35,16 +36,16 @@ func (s *PrivacyService) GetPrivacySettings(ctx context.Context, instanceID stri
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error obteniendo privacidad: %v", err))
 	}
 
-	// Convertir ReadReceipts de PrivacySetting a bool
+	// El timer por defecto es un parche de App State, pero whatsmeow ya tiene un helper directo.
+	// Por ahora lo inicializamos en 0 si no lo tenemos, pero ya lo podemos actualizar.
 	readReceipts := settings.ReadReceipts == types.PrivacySettingAll
-
 	return &models.PrivacySettings{
 		LastSeen:     string(settings.LastSeen),
 		ProfilePhoto: string(settings.Profile),
 		Status:       string(settings.Status),
 		ReadReceipts: &readReceipts,
 		Groups:       string(settings.GroupAdd),
-		DefaultTimer: "0", // Campo no disponible en la versión actual de whatsmeow
+		DefaultTimer: "0",
 	}, nil
 }
 
@@ -76,7 +77,10 @@ func (s *PrivacyService) UpdatePrivacySettings(ctx context.Context, instanceID s
 	case "groups":
 		_, err = client.WAClient.SetPrivacySetting(ctx, types.PrivacySettingTypeGroupAdd, types.PrivacySetting(req.Value))
 	case "default_timer":
-		return errors.New(501, "Actualización de timer no implementada")
+		// Implementación del timer de mensajes temporales por defecto.
+		// He descubierto que whatsmeow ya expone SetDefaultDisappearingTimer.
+		seconds, _ := strconv.Atoi(req.Value)
+		err = client.WAClient.SetDefaultDisappearingTimer(ctx, time.Duration(seconds)*time.Second)
 	default:
 		return errors.ErrBadRequest.WithDetails("Categoría inválida")
 	}

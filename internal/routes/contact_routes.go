@@ -12,6 +12,7 @@ func SetupContactRoutes(r chi.Router, handler *handlers.ContactHandler) {
 		r.Post("/check", handler.CheckContacts)
 		r.Post("/check-numbers", handler.CheckNumbers)
 		r.Get("/", handler.GetContacts)
+		r.Get("/blocklist", handler.GetBlocklist)
 
 		// Información específica
 		r.Get("/{phone}", handler.GetContactInfo)                    // Info detallada

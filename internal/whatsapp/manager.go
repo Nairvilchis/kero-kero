@@ -3,12 +3,14 @@ package whatsapp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mau.fi/whatsmeow/appstate"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -394,8 +396,24 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 			bgCtx := context.Background()
 			log.Info().Str("instance_id", instanceID).Msg("Procesando sincronización de historial")
 
+			// Enviar primer webhook de progreso
+			if m.webhookSvc != nil && v.Data.Progress != nil {
+				syncType := "unknown"
+				if v.Data.SyncType != nil {
+					syncType = v.Data.SyncType.String()
+				}
+				m.webhookSvc.SendEvent(bgCtx, instanceID, &models.WebhookEvent{
+					Event: "sync_progress",
+					Data: models.SyncEvent{
+						Percentage: int(*v.Data.Progress),
+						SyncType:   strings.ToLower(syncType),
+					},
+				})
+			}
+
 			count := 0
 			for _, conv := range v.Data.GetConversations() {
+
 				for _, historyMsg := range conv.GetMessages() {
 					webMsgInfo := historyMsg.GetMessage()
 					if webMsgInfo == nil {
@@ -581,6 +599,19 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 				Text:        content,
 				Timestamp:   v.Info.Timestamp.Unix(),
 				IsFromMe:    v.Info.IsFromMe,
+				SenderName:  v.Info.PushName,
+			}
+
+			// Intentar obtener el nombre del chat (especialmente si es grupo o contacto guardado)
+			if client != nil {
+				contact, err := client.WAClient.Store.Contacts.GetContact(bgCtx, chatJID)
+				if err == nil && (contact.FullName != "" || contact.BusinessName != "") {
+					if contact.BusinessName != "" {
+						messageEvent.ChatName = contact.BusinessName
+					} else {
+						messageEvent.ChatName = contact.FullName
+					}
+				}
 			}
 
 			// Extraer caption si existe
@@ -699,6 +730,11 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 				Data:  messageEvent,
 			})
 
+			// Lógica de Autolabeling (Etiquetas automáticas)
+			if content != "" && !v.Info.IsFromMe {
+				go m.handleAutoLabeling(instanceID, v.Info.Chat, content)
+			}
+
 			// Auto Reply Logic
 			if !v.Info.IsFromMe && m.automationSvc != nil {
 				go func() {
@@ -801,6 +837,129 @@ func (m *Manager) handleEvent(ctx context.Context, instanceID string, evt interf
 					"media": v.Media,
 				},
 			})
+		}
+
+	case *events.CallOffer:
+		// Lógica de rechazo automático inteligente.
+		// He implementado esto en una goroutine para no bloquear el procesamiento de otros eventos.
+		go func() {
+			bgCtx := context.Background()
+			data, err := m.redisClient.GetCallSettings(bgCtx, instanceID)
+			if err != nil {
+				return // Si no hay configuración en Redis, ignoramos el auto-rechazo.
+			}
+
+			var settings models.CallSettings
+			if err := json.Unmarshal([]byte(data), &settings); err != nil {
+				log.Error().Err(err).Msg("Error al decodificar settings de llamadas en el handler")
+				return
+			}
+
+			if settings.AutoReject {
+				// Aplicamos el delay de rechazo si se ha configurado
+				if settings.RejectDelay > 0 {
+					log.Debug().
+						Str("instance_id", instanceID).
+						Int("delay_seconds", settings.RejectDelay).
+						Msg("Esperando antes de rechazar la llamada")
+					time.Sleep(time.Duration(settings.RejectDelay) * time.Second)
+				}
+
+				log.Warn().
+					Str("instance_id", instanceID).
+					Str("from", v.From.String()).
+					Str("call_id", v.CallID).
+					Msg("Llamada detectada: Ejecutando rechazo automático")
+
+				client := m.GetClient(instanceID)
+				if client != nil {
+					// Rechazamos la llamada usando el cliente WA y el contexto.
+					client.WAClient.RejectCall(bgCtx, v.From, v.CallID)
+
+					// Si el usuario activó la respuesta inteligente, enviamos el mensaje.
+					if settings.AutoReplyEnabled && settings.AutoReplyMessage != "" {
+						// Un pequeño delay para que parezca que el usuario colgó y luego escribió.
+						time.Sleep(1500 * time.Millisecond)
+
+						replyMsg := &waProto.Message{
+							Conversation: proto.String(settings.AutoReplyMessage),
+						}
+						_, err := client.WAClient.SendMessage(bgCtx, v.From, replyMsg)
+						if err != nil {
+							log.Error().Err(err).Msg("Error enviando mensaje de auto-rechazo")
+						}
+					}
+				}
+			}
+
+			// Notificamos vía Webhook para que el CRM del cliente sepa qué pasó.
+			if m.webhookSvc != nil {
+				status := "incoming"
+				if settings.AutoReject {
+					status = "rejected"
+				}
+
+				m.webhookSvc.SendEvent(bgCtx, instanceID, &models.WebhookEvent{
+					Event: "call",
+					Data: models.CallEvent{
+						From:      v.From.String(),
+						Timestamp: time.Now().Unix(),
+						IsVideo:   false, // No disponible directamente en CallOffer básico
+						Status:    status,
+					},
+				})
+			}
+		}()
+
+	}
+}
+
+// handleAutoLabeling procesa el contenido de un mensaje y aplica etiquetas si coincide con las reglas.
+func (m *Manager) handleAutoLabeling(instanceID string, chatJID types.JID, content string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rulesJSON, err := m.redisClient.GetAutoLabelRules(ctx, instanceID)
+	if err != nil || rulesJSON == "" {
+		return
+	}
+
+	var rules []models.AutoLabelRule
+	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
+		log.Error().Err(err).Msg("Error decodificando reglas de autolabeling")
+		return
+	}
+
+	contentLower := strings.ToLower(content)
+	for _, rule := range rules {
+		matched := false
+		for _, keyword := range rule.Keywords {
+			if strings.Contains(contentLower, strings.ToLower(keyword)) {
+				matched = true
+				break
+			}
+		}
+
+		if matched {
+			log.Info().
+				Str("instance_id", instanceID).
+				Str("label_id", rule.LabelID).
+				Str("chat", chatJID.String()).
+				Msg("Auto-labeling: Regla coincidente detectada")
+
+			client := m.GetClient(instanceID)
+			if client != nil {
+				// whatsmeow usa BuildLabelChat para crear el patch de sincronización.
+				// El orden correcto es: (JID del chat, ID de la etiqueta, si se añade o quita)
+				patch := appstate.BuildLabelChat(chatJID, rule.LabelID, true)
+				err := client.WAClient.SendAppState(ctx, patch)
+				if err != nil {
+					log.Error().Err(err).Msg("Error aplicando etiqueta automática vía App State")
+				}
+			}
+
+			// Una vez que aplicamos una etiqueta, podríamos querer detenernos o seguir con otras reglas.
+			// Por ahora seguimos, permitiendo múltiples etiquetas.
 		}
 	}
 }

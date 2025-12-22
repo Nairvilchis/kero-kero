@@ -11,6 +11,8 @@ Este documento registra los cambios, correcciones y mejoras realizadas en el ser
 
 ### 🔧 Mejoras
 - **Soporte de PostgreSQL para whatsmeow**: Ahora el almacenamiento de sesiones de WhatsApp (`DeviceStore`) puede utilizar PostgreSQL si la aplicación está configurada con este driver. Esto centraliza la identidad de las sesiones, facilitando la escalabilidad y la recuperación ante fallos del contenedor.
+- **Obtención de QR Mejorada**: El endpoint `GET /instances/{id}/qr` ahora inicia automáticamente la conexión si la instancia no está conectada. Esto simplifica el flujo de autenticación, eliminando la necesidad de llamar primero a `/connect` y luego a `/qr`. El usuario solo necesita solicitar el QR y el sistema se encarga del resto.
+
 
 ### ⚡ Arquitectura
 - **Estado de Conexión en Redis**: Se implementó la sincronización del estado de las instancias (`connected`, `authenticated`, `disconnected`) en Redis.

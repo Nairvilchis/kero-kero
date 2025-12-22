@@ -138,3 +138,37 @@ func (h *ChatHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
+
+func (h *ChatHandler) Mute(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+	var req models.MuteChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	if err := h.service.MuteChat(r.Context(), instanceID, &req); err != nil {
+		errors.WriteJSON(w, errors.FromError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *ChatHandler) Pin(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+	var req models.PinChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	if err := h.service.PinChat(r.Context(), instanceID, &req); err != nil {
+		errors.WriteJSON(w, errors.FromError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}

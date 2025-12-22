@@ -21,6 +21,7 @@ func SetupMessageRoutes(r chi.Router, handler *handlers.MessageHandler) {
 		// Interacciones
 		r.Post("/react", handler.React)
 		r.Post("/revoke", handler.Revoke)
+		r.Post("/edit", handler.Edit)
 		r.Post("/mark-read", handler.MarkAsRead) // Nuevo: marcar como leído
 		r.Post("/download", handler.DownloadMedia)
 

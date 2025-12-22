@@ -119,3 +119,10 @@ type MarkAsReadRequest struct {
 	SenderJID string `json:"sender_jid" validate:"required"` // JID del remitente
 	Timestamp int64  `json:"timestamp" validate:"required"`  // Unix timestamp del mensaje
 }
+
+// EditMessageRequest representa la solicitud para editar un mensaje enviado
+type EditMessageRequest struct {
+	Phone     string `json:"phone" validate:"required"`
+	MessageID string `json:"message_id" validate:"required"`
+	NewText   string `json:"new_text" validate:"required"`
+}

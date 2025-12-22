@@ -14,5 +14,7 @@ func SetupChatRoutes(r chi.Router, handler *handlers.ChatHandler) {
 		r.Post("/archive", handler.Archive)
 		r.Post("/status", handler.UpdateStatus)
 		r.Post("/{jid}/read", handler.MarkAsRead)
+		r.Post("/mute", handler.Mute)
+		r.Post("/pin", handler.Pin)
 	})
 }

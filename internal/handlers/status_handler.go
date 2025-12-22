@@ -28,17 +28,7 @@ func (h *StatusHandler) PublishStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var resp *models.StatusResponse
-	var err error
-
-	switch req.Type {
-	case "text":
-		resp, err = h.service.PublishTextStatus(r.Context(), instanceID, &req)
-	default:
-		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("Tipo de estado no soportado. Use: text"))
-		return
-	}
-
+	resp, err := h.service.PublishStatus(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)

@@ -2,9 +2,13 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 
@@ -478,4 +482,97 @@ func (s *GroupService) RevokeInviteLink(ctx context.Context, instanceID, groupJI
 		InviteLink: "https://chat.whatsapp.com/" + code,
 		InviteCode: code,
 	}, nil
+}
+
+// JoinGroup se une a un grupo mediante un link o código de invitación.
+// Es una función muy útil para automatizar la entrada a grupos de soporte o ventas.
+func (s *GroupService) JoinGroup(ctx context.Context, instanceID string, req *models.JoinGroupRequest) (*models.GroupResponse, error) {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	// Extraer el código si pasaron un link completo.
+	code := req.InviteCode
+	if len(code) > 26 && code[:26] == "https://chat.whatsapp.com/" {
+		code = code[26:]
+	}
+
+	log.Info().Str("instance_id", instanceID).Str("code", code).Msg("Intentando unirse a grupo vía link")
+
+	jid, err := client.WAClient.JoinGroupWithLink(ctx, code)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("No se pudo unir al grupo (el link podría estar expirado): %v", err))
+	}
+
+	// Una vez dentro, intentamos obtener la info del grupo para devolver algo más que un JID.
+	info, _ := client.WAClient.GetGroupInfo(ctx, jid)
+	name := "Grupo Unido"
+	if info != nil {
+		name = info.Name
+	}
+
+	return &models.GroupResponse{
+		JID:  jid.String(),
+		Name: name,
+	}, nil
+}
+
+// UpdateGroupPicture actualiza la foto de perfil de un grupo.
+// Soporta tanto una URL externa como una imagen directamente en Base64.
+func (s *GroupService) UpdateGroupPicture(ctx context.Context, instanceID, groupJID string, req *models.UpdateGroupPictureRequest) error {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return errors.ErrInstanceNotFound
+	}
+	if !client.WAClient.IsLoggedIn() {
+		return errors.ErrNotAuthenticated
+	}
+
+	jid, err := types.ParseJID(groupJID)
+	if err != nil {
+		return errors.ErrBadRequest.WithDetails("JID de grupo inválido")
+	}
+
+	var avatar []byte
+
+	// Prioridad 1: Imagen en Base64
+	if req.Image != nil && *req.Image != "" {
+		data, err := base64.StdEncoding.DecodeString(*req.Image)
+		if err != nil {
+			return errors.ErrBadRequest.WithDetails("Formato Base64 inválido")
+		}
+		avatar = data
+	} else if req.ImageURL != nil && *req.ImageURL != "" {
+		// Prioridad 2: URL de imagen
+		resp, err := http.Get(*req.ImageURL)
+		if err != nil {
+			return errors.ErrBadRequest.WithDetails(fmt.Sprintf("No se pudo descargar la imagen de la URL: %v", err))
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return errors.ErrBadRequest.WithDetails(fmt.Sprintf("La URL devolvió un estado no exitoso: %d", resp.StatusCode))
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.ErrInternalServer.WithDetails("Error leyendo el cuerpo de la imagen")
+		}
+		avatar = data
+	} else {
+		return errors.ErrBadRequest.WithDetails("Se debe proporcionar una imagen en Base64 o una URL")
+	}
+
+	log.Info().Str("instance_id", instanceID).Str("group_jid", groupJID).Msg("Actualizando foto de grupo")
+
+	_, err = client.WAClient.SetGroupPhoto(ctx, jid, avatar)
+	if err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("WhatsApp rechazó la imagen (podría ser muy grande o formato incorrecto): %v", err))
+	}
+
+	return nil
 }

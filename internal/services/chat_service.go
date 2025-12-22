@@ -4,14 +4,19 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 
 	"kero-kero/internal/models"
 	"kero-kero/internal/repository"
 	"kero-kero/internal/whatsapp"
 	"kero-kero/pkg/errors"
+	"kero-kero/pkg/validators"
 )
 
 type ChatService struct {
@@ -113,19 +118,50 @@ func (s *ChatService) GetChatHistory(ctx context.Context, instanceID, jidStr str
 	return messages, nil
 }
 
-// ArchiveChat archiva o desarchiva un chat
+// ArchiveChat es mi implementación para archivar o desarchivar un chat.
+// Me he dado cuenta de que whatsmeow lo hace a través de parches de App State,
+// así que aquí construyo el parche y lo envío de forma atómica.
 func (s *ChatService) ArchiveChat(ctx context.Context, instanceID string, req *models.ArchiveChatRequest) error {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return errors.ErrNotAuthenticated
 	}
 
-	// jid := types.NewJID(req.Phone, types.DefaultUserServer)
-	// return client.WAClient.SendArchive(jid, req.Archived) // Método hipotético
-	return errors.New(501, "Archivar chat no implementado")
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
+
+	// Para archivar correctamente, WhatsApp me pide saber qué mensaje es el último.
+	// Intento obtenerlo de mi repositorio local.
+	lastMsg, err := s.msgRepo.GetLastMessage(ctx, instanceID, jid.String())
+	var lastTs time.Time
+	var lastKey *waCommon.MessageKey
+
+	if lastMsg != nil {
+		lastTs = time.Unix(lastMsg.Timestamp, 0)
+		lastKey = &waCommon.MessageKey{
+			RemoteJID: proto.String(jid.String()),
+			FromMe:    proto.Bool(lastMsg.IsFromMe),
+			ID:        proto.String(lastMsg.ID),
+		}
+	} else {
+		// Si no hay mensajes, uso el tiempo actual; WhatsApp suele aceptar esto para chats vacíos.
+		lastTs = time.Now()
+	}
+
+	patch := appstate.BuildArchive(jid, req.Archived, lastTs, lastKey)
+	if err := client.WAClient.SendAppState(ctx, patch); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Fallo al enviar parche de archivo: %v", err))
+	}
+
+	return nil
 }
 
 // UpdateStatus actualiza el estado de texto (About)
@@ -145,8 +181,10 @@ func (s *ChatService) UpdateStatus(ctx context.Context, instanceID, status strin
 	return nil
 }
 
-// DeleteChat elimina todos los mensajes de un chat (borra la conversación)
-func (s *ChatService) DeleteChat(ctx context.Context, instanceID, jid string) error {
+// DeleteChat es mi método para borrar permanentemente un chat.
+// No solo limpio mi base de datos, sino que también le digo a WhatsApp que lo borre
+// para que desaparezca de todos los dispositivos sincronizados.
+func (s *ChatService) DeleteChat(ctx context.Context, instanceID, jidStr string) error {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return errors.ErrInstanceNotFound
@@ -155,15 +193,44 @@ func (s *ChatService) DeleteChat(ctx context.Context, instanceID, jid string) er
 		return errors.ErrNotAuthenticated
 	}
 
-	// Eliminar todos los mensajes del chat
-	if err := s.msgRepo.DeleteChatMessages(ctx, instanceID, jid); err != nil {
-		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error eliminando chat: %v", err))
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return errors.ErrBadRequest.WithDetails("JID inválido")
+	}
+
+	// Primero obtengo el último mensaje para que el comando de borrado sea preciso.
+	lastMsg, _ := s.msgRepo.GetLastMessage(ctx, instanceID, jidStr)
+	var lastTs time.Time
+	var lastKey *waCommon.MessageKey
+
+	if lastMsg != nil {
+		lastTs = time.Unix(lastMsg.Timestamp, 0)
+		lastKey = &waCommon.MessageKey{
+			RemoteJID: proto.String(jid.String()),
+			FromMe:    proto.Bool(lastMsg.IsFromMe),
+			ID:        proto.String(lastMsg.ID),
+		}
+	} else {
+		lastTs = time.Now()
+	}
+
+	// Envío la señal a WhatsApp.
+	patch := appstate.BuildDeleteChat(jid, lastTs, lastKey)
+	if err := client.WAClient.SendAppState(ctx, patch); err != nil {
+		log.Warn().Err(err).Msg("No pude sincronizar el borrado del chat con WhatsApp, borrando solo local")
+	}
+
+	// Y limpio los mensajes de mi base de datos local.
+	if err := s.msgRepo.DeleteChatMessages(ctx, instanceID, jidStr); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error eliminando chat local: %v", err))
 	}
 
 	return nil
 }
 
-// MarkAsRead marca los mensajes de un chat como leídos
+// MarkAsRead marca todos los mensajes pendientes de un chat como leídos.
+// He implementado esto usando BuildMarkChatAsRead para que el cambio se sincronice
+// correctamente en el teléfono y otros clientes web/desktop.
 func (s *ChatService) MarkAsRead(ctx context.Context, instanceID, jidStr string) error {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
@@ -173,24 +240,98 @@ func (s *ChatService) MarkAsRead(ctx context.Context, instanceID, jidStr string)
 		return errors.ErrNotAuthenticated
 	}
 
-	// Parsear JID
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
 		return errors.ErrBadRequest.WithDetails("JID inválido")
 	}
 
-	// Marcar como leído en WhatsApp
-	// Nota: whatsmeow no tiene un método directo para marcar como leído,
-	// pero podemos enviar un receipt de lectura para los mensajes recientes
-	// Por ahora, simplemente retornamos success ya que WhatsApp marca automáticamente
-	// como leído cuando abres el chat en la app oficial
+	// Necesitamos identificar hasta qué mensaje marcamos como leído.
+	lastMsg, _ := s.msgRepo.GetLastMessage(ctx, instanceID, jidStr)
+	var lastTs time.Time
+	var lastKey *waCommon.MessageKey
 
-	log.Info().Str("instance_id", instanceID).Str("jid", jidStr).Msg("Marcando chat como leído")
+	if lastMsg != nil {
+		lastTs = time.Unix(lastMsg.Timestamp, 0)
+		lastKey = &waCommon.MessageKey{
+			RemoteJID: proto.String(jid.String()),
+			FromMe:    proto.Bool(lastMsg.IsFromMe),
+			ID:        proto.String(lastMsg.ID),
+		}
+	} else {
+		lastTs = time.Now()
+	}
 
-	// TODO: Implementar lógica de marcar como leído si whatsmeow lo soporta en el futuro
-	// Por ahora, esto es principalmente para el frontend (resetear contador de no leídos)
+	log.Info().Str("instance_id", instanceID).Str("jid", jidStr).Msg("Sincronizando marca de lectura en WhatsApp")
 
-	_ = jid // Evitar warning de variable no usada
+	patch := appstate.BuildMarkChatAsRead(jid, true, lastTs, lastKey)
+	if err := client.WAClient.SendAppState(ctx, patch); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Fallo al marcar chat como leído: %v", err))
+	}
+
+	return nil
+}
+
+// MuteChat silencia o quita el silencio de un chat.
+// He añadido esto porque whatsmeow permite sincronizar el silencio entre dispositivos.
+func (s *ChatService) MuteChat(ctx context.Context, instanceID string, req *models.MuteChatRequest) error {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return errors.ErrInstanceNotFound
+	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
+		return errors.ErrNotAuthenticated
+	}
+
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
+
+	log.Info().Str("instance_id", instanceID).Str("jid", jid.String()).Bool("muted", req.Muted).Msg("Cambiando estado de silencio del chat")
+
+	var duration time.Duration
+	if req.Muted && req.Duration > 0 {
+		duration = time.Duration(req.Duration) * time.Second
+	} else if req.Muted {
+		duration = 24 * 365 * 10 * time.Hour // "Para siempre" (aprox 10 años)
+	}
+
+	patch := appstate.BuildMute(jid, req.Muted, duration)
+	if err := client.WAClient.SendAppState(ctx, patch); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Fallo al silenciar chat: %v", err))
+	}
+
+	return nil
+}
+
+// PinChat fija o desfija un chat en la parte superior.
+// Muy útil para mantener chats importantes siempre a la vista, sincronizado con WhatsApp.
+func (s *ChatService) PinChat(ctx context.Context, instanceID string, req *models.PinChatRequest) error {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return errors.ErrInstanceNotFound
+	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
+		return errors.ErrNotAuthenticated
+	}
+
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
+
+	log.Info().Str("instance_id", instanceID).Str("jid", jid.String()).Bool("pinned", req.Pinned).Msg("Cambiando pin del chat")
+
+	patch := appstate.BuildPin(jid, req.Pinned)
+	if err := client.WAClient.SendAppState(ctx, patch); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Fallo al fijar chat: %v", err))
+	}
 
 	return nil
 }

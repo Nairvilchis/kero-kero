@@ -2,10 +2,13 @@ package models
 
 // PublishStatusRequest representa la solicitud para publicar un estado
 type PublishStatusRequest struct {
-	Type     string `json:"type" validate:"required"` // text, image, video
-	Content  string `json:"content,omitempty"`        // Para texto
-	MediaURL string `json:"media_url,omitempty"`      // Para imagen/video
-	Caption  string `json:"caption,omitempty"`
+	Type            string `json:"type" validate:"required"` // text, image, video
+	Content         string `json:"content,omitempty"`        // Para texto
+	MediaURL        string `json:"media_url,omitempty"`      // Para imagen/video
+	Caption         string `json:"caption,omitempty"`
+	BackgroundColor string `json:"background_color,omitempty"` // Hexadecimal (ej: #FF0000)
+	TextColor       string `json:"text_color,omitempty"`       // Hexadecimal (ej: #FFFFFF)
+	Font            int32  `json:"font,omitempty"`             // 1-10 (opcional)
 }
 
 // StatusResponse representa la respuesta al publicar un estado

@@ -10,6 +10,7 @@ import (
 
 	"kero-kero/internal/models"
 	"kero-kero/internal/repository"
+	"kero-kero/pkg/errors"
 )
 
 // QueueService gestiona la cola de mensajes
@@ -70,6 +71,7 @@ func (s *QueueService) EnqueueMessage(ctx context.Context, instanceID string, ms
 
 func (s *QueueService) workerLoop(id int) {
 	queueKey := "queue:messages"
+	processingKey := fmt.Sprintf("queue:processing:%d", id)
 	log.Debug().Int("worker_id", id).Msg("Worker iniciado")
 
 	for {
@@ -78,15 +80,14 @@ func (s *QueueService) workerLoop(id int) {
 			log.Debug().Int("worker_id", id).Msg("Worker detenido")
 			return
 		default:
-			// Bloqueante con timeout de 2 segundos para permitir shutdown limpio
-			data, err := s.redisClient.DequeueMessage(context.Background(), queueKey, 2*time.Second)
+			// Usar pop confiable para evitar pérdida de mensajes en crashes
+			data, err := s.redisClient.DequeueMessageReliable(context.Background(), queueKey, processingKey, 2*time.Second)
 			if err != nil {
-				// Redis timeout es normal
+				// redis.Nil es normal cuando el timeout ocurre y la cola está vacía
 				if err.Error() == "redis: nil" {
 					continue
 				}
-				// Otros errores (conexión, etc)
-				// Si no es timeout, hacer un pequeño sleep para no saturar CPU en caso de error loop
+				log.Error().Err(err).Int("worker_id", id).Msg("Error extrayendo de la cola")
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -95,26 +96,46 @@ func (s *QueueService) workerLoop(id int) {
 				continue
 			}
 
-			s.processMessage(data)
+			// Procesar el mensaje
+			if err := s.processMessage(data); err != nil {
+				if err == errors.ErrRateLimitReached {
+					log.Warn().Int("worker_id", id).Msg("Rate limit alcanzado para la instancia. Re-encolando con delay.")
+					s.handleRateLimitRetry(data)
+				} else {
+					log.Error().Err(err).Int("worker_id", id).Msg("Error procesando mensaje, re-encolando si es posible")
+					s.handleRetry(data)
+				}
+			}
+
+			// Una vez procesado (con éxito o fallido tras reintentos), quitar de la cola de procesamiento
+			if err := s.redisClient.AckMessage(context.Background(), processingKey, data); err != nil {
+				log.Error().Err(err).Int("worker_id", id).Msg("Error haciendo ACK de mensaje")
+			}
 		}
 	}
 }
 
-func (s *QueueService) processMessage(data string) {
+func (s *QueueService) processMessage(data string) error {
 	var msg models.QueuedMessage
 	if err := json.Unmarshal([]byte(data), &msg); err != nil {
 		log.Error().Err(err).Str("data", data).Msg("Error deserializando mensaje de cola")
-		return
+		return nil // No reintentamos error de formato
 	}
 
 	ctx := context.Background()
+
+	// Verificar Rate Limit (20 mensajes por minuto por instancia)
+	// He implementado esto aquí para que sea la primera línea de defensa antes de tocar el cliente WA.
+	allowed, err := s.redisClient.CheckRateLimit(ctx, msg.InstanceID, 20, 60*time.Second)
+	if err != nil {
+		log.Error().Err(err).Str("instance_id", msg.InstanceID).Msg("Error verificando rate limit")
+	} else if !allowed {
+		return errors.ErrRateLimitReached
+	}
+
 	log.Debug().Str("msg_id", msg.ID).Str("type", string(msg.Type)).Msg("Procesando mensaje de cola")
 
-	var err error
-
 	// Convertir payload map[string]interface{} al struct correcto
-	// JSON unmarshal lo deja como map, necesitamos re-marshalear o usar mapstructure
-	// Para simplicidad, usamos Marshal/Unmarshal de nuevo
 	payloadBytes, _ := json.Marshal(msg.Payload)
 
 	switch msg.Type {
@@ -150,12 +171,40 @@ func (s *QueueService) processMessage(data string) {
 		}
 	default:
 		log.Warn().Str("type", string(msg.Type)).Msg("Tipo de mensaje desconocido en cola")
-		return
+		return nil
 	}
 
 	if err != nil {
 		log.Error().Err(err).Str("msg_id", msg.ID).Msg("Error enviando mensaje desde cola")
-		// Aquí se podría implementar lógica de reintentos (incrementar msg.Attempts y re-encolar si < MaxAttempts)
-		// Por ahora lo descartamos para evitar bucles infinitos
+		return err
 	}
+
+	return nil
+}
+
+func (s *QueueService) handleRetry(data string) {
+	var msg models.QueuedMessage
+	if err := json.Unmarshal([]byte(data), &msg); err != nil {
+		return
+	}
+
+	if msg.Attempts >= 3 {
+		log.Error().Str("msg_id", msg.ID).Int("attempts", msg.Attempts).Msg("Mensaje fallido tras máximo de reintentos")
+		return
+	}
+
+	msg.Attempts++
+	// Esperar un poco antes de re-encolar (backoff simple)
+	time.Sleep(time.Duration(msg.Attempts) * 2 * time.Second)
+
+	jsonBytes, _ := json.Marshal(msg)
+	s.redisClient.EnqueueMessage(context.Background(), "queue:messages", string(jsonBytes))
+	log.Info().Str("msg_id", msg.ID).Int("attempt", msg.Attempts).Msg("Mensaje re-encolado para reintento")
+}
+
+func (s *QueueService) handleRateLimitRetry(data string) {
+	// En caso de rate limit, re-encolamos sin penalizar "Attempts"
+	// Pero esperamos un poco para dejar que la ventana de tiempo se limpie.
+	time.Sleep(5 * time.Second)
+	s.redisClient.EnqueueMessage(context.Background(), "queue:messages", data)
 }

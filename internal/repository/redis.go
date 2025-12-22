@@ -122,6 +122,20 @@ func (r *RedisClient) DeleteSession(ctx context.Context, instanceID string) erro
 	return r.Delete(ctx, key)
 }
 
+// --- Métodos para Llamadas ---
+
+// SetCallSettings almacena la configuración de llamadas
+func (r *RedisClient) SetCallSettings(ctx context.Context, instanceID string, settings interface{}) error {
+	key := fmt.Sprintf("call_settings:%s", instanceID)
+	return r.Set(ctx, key, settings, 0) // No expira
+}
+
+// GetCallSettings obtiene la configuración de llamadas
+func (r *RedisClient) GetCallSettings(ctx context.Context, instanceID string) (string, error) {
+	key := fmt.Sprintf("call_settings:%s", instanceID)
+	return r.Get(ctx, key)
+}
+
 // --- Métodos para Cola de Mensajes ---
 
 // EnqueueMessage añade un mensaje a la cola
@@ -139,6 +153,21 @@ func (r *RedisClient) DequeueMessage(ctx context.Context, queueName string, time
 		return "", fmt.Errorf("respuesta inválida de cola")
 	}
 	return result[1], nil
+}
+
+// DequeueMessageReliable obtiene un mensaje de la cola principal y lo mueve a una cola de procesamiento de forma atómica
+func (r *RedisClient) DequeueMessageReliable(ctx context.Context, queueName, processingQueue string, timeout time.Duration) (string, error) {
+	// BRPopLPush mueve un elemento de la cola de origen a la cola de destino de forma atómica
+	result, err := r.Client.BRPopLPush(ctx, queueName, processingQueue, timeout).Result()
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+// AckMessage elimina un mensaje de la cola de procesamiento una vez que ha sido procesado con éxito
+func (r *RedisClient) AckMessage(ctx context.Context, processingQueue, message string) error {
+	return r.Client.LRem(ctx, processingQueue, 1, message).Err()
 }
 
 // GetQueueLength obtiene la longitud de una cola
@@ -166,17 +195,35 @@ func (r *RedisClient) GetInstanceStatus(ctx context.Context, instanceID string) 
 	return val, err
 }
 
-// --- Métodos para Rate Limiting (adicional) ---
+// CheckRateLimit verifica si una instancia ha superado el límite de mensajes en una ventana de tiempo.
+// He usado un script Lua para garantizar que el incremento y la expiración sean atómicos.
+func (r *RedisClient) CheckRateLimit(ctx context.Context, instanceID string, limit int, window time.Duration) (bool, error) {
+	key := fmt.Sprintf("ratelimit:%s", instanceID)
 
-// IncrementCounter incrementa un contador con expiración
-func (r *RedisClient) IncrementCounter(ctx context.Context, key string, expiration time.Duration) (int64, error) {
-	pipe := r.Client.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, expiration)
+	script := `
+        local current = redis.call("INCR", KEYS[1])
+        if current == 1 then
+            redis.call("EXPIRE", KEYS[1], ARGV[1])
+        end
+        return current
+    `
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, err
+	val, err := r.Client.Eval(ctx, script, []string{key}, int(window.Seconds())).Int64()
+	if err != nil {
+		return false, err
 	}
 
-	return incr.Val(), nil
+	return val <= int64(limit), nil
+}
+
+// SetAutoLabelRules almacena las reglas de etiquetado automático
+func (r *RedisClient) SetAutoLabelRules(ctx context.Context, instanceID string, rulesJSON string) error {
+	key := fmt.Sprintf("autolabel_rules:%s", instanceID)
+	return r.Set(ctx, key, rulesJSON, 0)
+}
+
+// GetAutoLabelRules obtiene las reglas de etiquetado automático
+func (r *RedisClient) GetAutoLabelRules(ctx context.Context, instanceID string) (string, error) {
+	key := fmt.Sprintf("autolabel_rules:%s", instanceID)
+	return r.Get(ctx, key)
 }

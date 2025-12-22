@@ -113,3 +113,8 @@ type GroupActionResponse struct {
 	Message string   `json:"message,omitempty"`
 	Failed  []string `json:"failed,omitempty"` // Participantes que fallaron
 }
+
+// JoinGroupRequest solicitud para unirse a un grupo mediante código o link
+type JoinGroupRequest struct {
+	InviteCode string `json:"invite_code" validate:"required"` // Puede ser el código directo o el link completo
+}

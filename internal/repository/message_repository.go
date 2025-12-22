@@ -239,6 +239,94 @@ func (r *MessageRepository) GetChatsWithMessages(ctx context.Context, instanceID
 	return chats, nil
 }
 
+// GetLastMessage obtiene el último mensaje de un chat
+func (r *MessageRepository) GetLastMessage(ctx context.Context, instanceID, jid string) (*models.Message, error) {
+	query := `
+		SELECT id, instance_id, jid, from_me, content, push_name, timestamp, status, type
+		FROM messages
+		WHERE instance_id = $1 AND jid = $2
+		ORDER BY timestamp DESC
+		LIMIT 1
+	`
+
+	if r.db.Driver == "sqlite" || r.db.Driver == "sqlite3" {
+		query = `
+			SELECT id, instance_id, jid, from_me, content, push_name, timestamp, status, type
+			FROM messages
+			WHERE instance_id = ? AND jid = ?
+			ORDER BY timestamp DESC
+			LIMIT 1
+		`
+	}
+
+	row := r.db.DB.QueryRowContext(ctx, query, instanceID, jid)
+
+	var msg models.Message
+	var ts interface{}
+	var instanceIDDB string
+	var jidDB string
+	var pushName sql.NullString
+
+	err := row.Scan(
+		&msg.ID,
+		&instanceIDDB,
+		&jidDB,
+		&msg.IsFromMe,
+		&msg.Content,
+		&pushName,
+		&ts,
+		&msg.Status,
+		&msg.Type,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("error scanning last message: %w", err)
+	}
+
+	if pushName.Valid {
+		msg.PushName = pushName.String
+	}
+
+	if ts != nil {
+		switch v := ts.(type) {
+		case time.Time:
+			msg.Timestamp = v.Unix()
+		case string:
+			if t, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", v); err == nil {
+				msg.Timestamp = t.Unix()
+			} else if t, err := time.Parse(time.RFC3339, v); err == nil {
+				msg.Timestamp = t.Unix()
+			} else if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				msg.Timestamp = t.Unix()
+			}
+		case []byte:
+			s := string(v)
+			if t, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", s); err == nil {
+				msg.Timestamp = t.Unix()
+			} else if t, err := time.Parse(time.RFC3339, s); err == nil {
+				msg.Timestamp = t.Unix()
+			} else if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+				msg.Timestamp = t.Unix()
+			}
+		case int64:
+			msg.Timestamp = v
+		}
+	}
+
+	if msg.IsFromMe {
+		msg.From = "me"
+		msg.To = jidDB
+	} else {
+		msg.From = jidDB
+		msg.To = "me"
+	}
+
+	return &msg, nil
+}
+
 // DeleteChatMessages elimina todos los mensajes de un chat
 func (r *MessageRepository) DeleteChatMessages(ctx context.Context, instanceID, jid string) error {
 	query := `DELETE FROM messages WHERE instance_id = $1 AND jid = $2`

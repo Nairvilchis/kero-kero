@@ -12,6 +12,7 @@ import (
 	"kero-kero/internal/models"
 	"kero-kero/internal/whatsapp"
 	"kero-kero/pkg/errors"
+	"kero-kero/pkg/validators"
 )
 
 type ContactService struct {
@@ -35,34 +36,39 @@ func (s *ContactService) CheckContacts(ctx context.Context, instanceID string, p
 	result := make([]models.ContactInfo, 0, len(phones))
 
 	for _, phone := range phones {
-		phone = strings.TrimPrefix(phone, "+")
-
-		jids, err := client.WAClient.IsOnWhatsApp(ctx, []string{phone})
+		cleanPhone, err := validators.ValidatePhoneNumber(phone)
 		if err != nil {
-			continue
-		}
-
-		if len(jids) > 0 {
-			info := jids[0]
-			contact := models.ContactInfo{
-				JID:   info.JID.String(),
-				Found: info.VerifiedName != nil || info.JID.User == phone,
-			}
-
-			if storeContact, err := client.WAClient.Store.Contacts.GetContact(ctx, info.JID); err == nil && storeContact.Found {
-				contact.FirstName = storeContact.FirstName
-				contact.FullName = storeContact.FullName
-				contact.PushName = storeContact.PushName
-				contact.BusinessName = storeContact.BusinessName
-			}
-
-			result = append(result, contact)
-		} else {
+			// Si el número no es válido, lo marcamos como no encontrado
 			result = append(result, models.ContactInfo{
 				JID:   phone,
 				Found: false,
 			})
+			continue
 		}
+
+		jids, err := client.WAClient.IsOnWhatsApp(ctx, []string{cleanPhone})
+		if err != nil || len(jids) == 0 {
+			result = append(result, models.ContactInfo{
+				JID:   cleanPhone + "@s.whatsapp.net",
+				Found: false,
+			})
+			continue
+		}
+
+		info := jids[0]
+		contact := models.ContactInfo{
+			JID:   info.JID.String(),
+			Found: info.IsIn,
+		}
+
+		if storeContact, err := client.WAClient.Store.Contacts.GetContact(ctx, info.JID); err == nil && storeContact.Found {
+			contact.FirstName = storeContact.FirstName
+			contact.FullName = storeContact.FullName
+			contact.PushName = storeContact.PushName
+			contact.BusinessName = storeContact.BusinessName
+		}
+
+		result = append(result, contact)
 	}
 
 	return result, nil
@@ -74,11 +80,17 @@ func (s *ContactService) GetProfilePicture(ctx context.Context, instanceID, phon
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	jid := types.NewJID(phone, types.DefaultUserServer)
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	info, err := client.WAClient.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{
 		Preview: false,
@@ -132,11 +144,17 @@ func (s *ContactService) SubscribePresence(ctx context.Context, instanceID, phon
 	if client == nil {
 		return errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return errors.ErrNotAuthenticated
 	}
 
-	jid := types.NewJID(phone, types.DefaultUserServer)
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	if err := client.WAClient.SubscribePresence(ctx, jid); err != nil {
 		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error suscribiendo presencia: %v", err))
@@ -151,11 +169,17 @@ func (s *ContactService) BlockContact(ctx context.Context, instanceID, phone str
 	if client == nil {
 		return errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return errors.ErrNotAuthenticated
 	}
 
-	jid := types.NewJID(phone, types.DefaultUserServer)
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	if _, err := client.WAClient.UpdateBlocklist(ctx, jid, events.BlocklistChangeActionBlock); err != nil {
 		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error bloqueando contacto: %v", err))
@@ -170,11 +194,17 @@ func (s *ContactService) UnblockContact(ctx context.Context, instanceID, phone s
 	if client == nil {
 		return errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return errors.ErrNotAuthenticated
 	}
 
-	jid := types.NewJID(phone, types.DefaultUserServer)
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	if _, err := client.WAClient.UpdateBlocklist(ctx, jid, events.BlocklistChangeActionUnblock); err != nil {
 		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error desbloqueando contacto: %v", err))
@@ -197,13 +227,8 @@ func (s *ContactService) CheckNumbers(ctx context.Context, instanceID string, re
 
 	// Procesar cada número
 	for _, phone := range req.Phones {
-		// Limpiar el número
-		phone = strings.TrimPrefix(phone, "+")
-
-		// Verificar si el número está en WhatsApp usando IsOnWhatsApp
-		jids, err := client.WAClient.IsOnWhatsApp(ctx, []string{phone})
+		cleanPhone, err := validators.ValidatePhoneNumber(phone)
 		if err != nil {
-			// Si hay error, marcar como no existente
 			results = append(results, models.CheckNumberResult{
 				Phone:  phone,
 				Exists: false,
@@ -212,17 +237,28 @@ func (s *ContactService) CheckNumbers(ctx context.Context, instanceID string, re
 			continue
 		}
 
+		// Verificar si el número está en WhatsApp usando IsOnWhatsApp
+		jids, err := client.WAClient.IsOnWhatsApp(ctx, []string{cleanPhone})
+		if err != nil || len(jids) == 0 {
+			results = append(results, models.CheckNumberResult{
+				Phone:  cleanPhone,
+				Exists: false,
+				JID:    nil,
+			})
+			continue
+		}
+
 		// Verificar si se encontró el número
-		if len(jids) > 0 && jids[0].IsIn {
+		if jids[0].IsIn {
 			jidStr := jids[0].JID.String()
 			results = append(results, models.CheckNumberResult{
-				Phone:  phone,
+				Phone:  cleanPhone,
 				Exists: true,
 				JID:    &jidStr,
 			})
 		} else {
 			results = append(results, models.CheckNumberResult{
-				Phone:  phone,
+				Phone:  cleanPhone,
 				Exists: false,
 				JID:    nil,
 			})
@@ -241,31 +277,39 @@ func (s *ContactService) GetContactInfo(ctx context.Context, instanceID, phone s
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	jid, err := types.ParseJID(phone)
-	if err != nil {
-		jid, err = types.ParseJID(phone + "@s.whatsapp.net")
-		if err != nil {
-			return nil, errors.ErrBadRequest.WithDetails("Número de teléfono inválido")
-		}
-	}
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	// 1. Obtener info básica del store
 	contact, err := client.WAClient.Store.Contacts.GetContact(ctx, jid)
-	if err != nil {
-		// Si no está en el store, usar valores por defecto
-		contact = types.ContactInfo{Found: false}
+	if err != nil || !contact.Found {
+		// Si no está en el store, intentar verificar si está en WhatsApp
+		jids, _ := client.WAClient.IsOnWhatsApp(ctx, []string{cleanPhone})
+		if len(jids) > 0 && jids[0].IsIn {
+			jid = jids[0].JID
+			contact = types.ContactInfo{Found: true}
+		} else {
+			contact = types.ContactInfo{Found: false}
+		}
 	}
 
-	// 2. Obtener estado (About) - OMITIDO POR AHORA
+	// 2. Obtener estado (About)
 	var status string
-	// about, err := client.WAClient.GetUserProfile(ctx, []types.JID{jid})
-	// if err == nil && len(about) > 0 {
-	// 	status = about[0].Status
-	// }
+	resp, err := client.WAClient.GetUserInfo(ctx, []types.JID{jid})
+	if err == nil {
+		if info, ok := resp[jid]; ok {
+			status = info.Status
+		}
+	}
 
 	// 3. Obtener foto de perfil
 	var picURL string
@@ -306,6 +350,48 @@ func (s *ContactService) GetContactInfo(ctx context.Context, instanceID, phone s
 
 // GetAbout obtiene el estado/about de un contacto
 func (s *ContactService) GetAbout(ctx context.Context, instanceID, phone string) (*models.AboutResponse, error) {
-	// Como no tenemos método confiable para GetAbout en esta versión, retornamos no implementado o vacío
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	jid := types.NewJID(cleanPhone, types.DefaultUserServer)
+
+	resp, err := client.WAClient.GetUserInfo(ctx, []types.JID{jid})
+	if err != nil {
+		return &models.AboutResponse{About: ""}, nil
+	}
+
+	if info, ok := resp[jid]; ok {
+		return &models.AboutResponse{About: info.Status}, nil
+	}
+
 	return &models.AboutResponse{About: ""}, nil
+}
+
+// GetBlocklist obtiene la lista de todos los contactos bloqueados en la instancia.
+func (s *ContactService) GetBlocklist(ctx context.Context, instanceID string) (*types.Blocklist, error) {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	blocklist, err := client.WAClient.GetBlocklist(ctx)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error obteniendo lista de bloqueados: %v", err))
+	}
+
+	return blocklist, nil
 }

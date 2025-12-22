@@ -2,21 +2,28 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"kero-kero/internal/models"
+	"kero-kero/internal/repository"
 	"kero-kero/internal/whatsapp"
 	"kero-kero/pkg/errors"
 )
 
 type CallService struct {
-	waManager *whatsapp.Manager
+	waManager   *whatsapp.Manager
+	redisClient *repository.RedisClient
 }
 
-func NewCallService(waManager *whatsapp.Manager) *CallService {
-	return &CallService{waManager: waManager}
+func NewCallService(waManager *whatsapp.Manager, redisClient *repository.RedisClient) *CallService {
+	return &CallService{
+		waManager:   waManager,
+		redisClient: redisClient,
+	}
 }
 
-// RejectCall rechaza una llamada entrante
+// RejectCall rechaza una llamada entrante (manualmente vía API)
 func (s *CallService) RejectCall(ctx context.Context, instanceID, callID, from string) error {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
@@ -26,42 +33,41 @@ func (s *CallService) RejectCall(ctx context.Context, instanceID, callID, from s
 		return errors.ErrNotAuthenticated
 	}
 
-	// Nota: El rechazo de llamadas en whatsmeow requiere manejar eventos de llamada
-	// y responder apropiadamente. La API de WhatsApp no expone un método directo
-	// para rechazar llamadas vía mensaje.
-	// Esta funcionalidad se implementa mejor en el event handler del Manager.
-
-	return errors.New(501, "Rechazo manual de llamadas no implementado. Use auto_reject en settings")
+	// whatsmeow requiere que estemos escuchando el evento CallOffer para rechazarla.
+	// El rechazo manual vía ID es complejo si no tenemos el estado de la llamada.
+	// Por ahora devolvemos 501.
+	return errors.New(501, "Rechazo manual de llamadas por ID no implementado directamente en whatsmeow. Use auto_reject.")
 }
 
-// GetCallSettings obtiene la configuración de llamadas
+// GetCallSettings obtiene la configuración de llamadas desde Redis
 func (s *CallService) GetCallSettings(ctx context.Context, instanceID string) (*models.CallSettings, error) {
-	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, errors.ErrInstanceNotFound
-	}
-	if !client.WAClient.IsLoggedIn() {
-		return nil, errors.ErrNotAuthenticated
+	data, err := s.redisClient.GetCallSettings(ctx, instanceID)
+	if err != nil {
+		// Si no hay configuración, devolvemos los valores por defecto
+		return &models.CallSettings{
+			AutoReject:       false,
+			AutoReplyEnabled: false,
+		}, nil
 	}
 
-	// Nota: La configuración de auto-rechazo se gestiona en el Manager
-	// Esta es una implementación básica
-	return &models.CallSettings{
-		AutoReject: false, // Por defecto desactivado
-	}, nil
+	var settings models.CallSettings
+	if err := json.Unmarshal([]byte(data), &settings); err != nil {
+		return nil, errors.ErrInternalServer.WithDetails("Error parseando configuración de llamadas")
+	}
+
+	return &settings, nil
 }
 
-// SetCallSettings actualiza la configuración de llamadas
+// SetCallSettings actualiza la configuración de llamadas en Redis
 func (s *CallService) SetCallSettings(ctx context.Context, instanceID string, settings *models.CallSettings) error {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return errors.ErrInstanceNotFound
 	}
-	if !client.WAClient.IsLoggedIn() {
-		return errors.ErrNotAuthenticated
+
+	if err := s.redisClient.SetCallSettings(ctx, instanceID, settings); err != nil {
+		return errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error guardando settings en Redis: %v", err))
 	}
 
-	// Nota: La lógica de auto-rechazo debería implementarse en el event handler del Manager
-	// Aquí solo validamos que el cliente existe
 	return nil
 }

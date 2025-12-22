@@ -98,10 +98,11 @@ func main() {
 	automationService := services.NewAutomationService(waManager, redisClient.Client) // Nuevo servicio de automatización
 	chatService := services.NewChatService(waManager, msgRepo)
 	statusService := services.NewStatusService(waManager)
-	callService := services.NewCallService(waManager)
+	callService := services.NewCallService(waManager, redisClient)
 	wsService := services.NewWebSocketService()
-	crmService := services.NewCRMService()
 	syncService := services.NewSyncService(waManager, msgRepo, chatService)
+	newsletterService := services.NewNewsletterService(waManager, messageService)
+	businessService := services.NewBusinessService(waManager, redisClient)
 
 	// Iniciar servicio WebSocket
 	// Iniciar servicio WebSocket
@@ -133,8 +134,9 @@ func main() {
 	statusHandler := handlers.NewStatusHandler(statusService)
 	callHandler := handlers.NewCallHandler(callService)
 	webhookHandler := handlers.NewWebhookHandler(webhookService)
-	crmHandler := handlers.NewCRMHandler(crmService)
 	syncHandler := handlers.NewSyncHandler(syncService)
+	newsletterHandler := handlers.NewNewsletterHandler(newsletterService)
+	businessHandler := handlers.NewBusinessHandler(businessService)
 
 	// Router
 	r := chi.NewRouter()
@@ -224,8 +226,9 @@ func main() {
 		routes.SetupStatusRoutes(r, statusHandler)
 		routes.SetupCallRoutes(r, callHandler)
 		routes.SetupWebhookRoutes(r, webhookHandler)
-		routes.SetupCRMRoutes(r, crmHandler)
 		routes.SetupSyncRoutes(r, syncHandler)
+		routes.SetupNewsletterRoutes(r, newsletterHandler)
+		routes.SetupBusinessRoutes(r, businessHandler)
 	})
 
 	// Servidor HTTP

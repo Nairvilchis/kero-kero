@@ -6,6 +6,19 @@ type ArchiveChatRequest struct {
 	Archived bool   `json:"archived"`
 }
 
+// MuteChatRequest solicitud para silenciar/desactivar silencio de un chat
+type MuteChatRequest struct {
+	Phone    string `json:"phone" validate:"required"`
+	Muted    bool   `json:"muted"`
+	Duration int64  `json:"duration"` // Duración en segundos (0 para siempre)
+}
+
+// PinChatRequest solicitud para fijar/desfijar chat
+type PinChatRequest struct {
+	Phone  string `json:"phone" validate:"required"`
+	Pinned bool   `json:"pinned"`
+}
+
 // UpdateStatusRequest solicitud para actualizar el estado de texto (About)
 type UpdateStatusRequest struct {
 	Status string `json:"status" validate:"required"`

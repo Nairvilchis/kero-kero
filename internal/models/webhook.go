@@ -43,6 +43,8 @@ type MessageEvent struct {
 	LocationAddress string `json:"location_address,omitempty"` // Dirección del lugar
 	Timestamp       int64  `json:"timestamp"`
 	IsFromMe        bool   `json:"is_from_me"`
+	SenderName      string `json:"sender_name,omitempty"` // Nombre del remitente (PushName)
+	ChatName        string `json:"chat_name,omitempty"`   // Nombre del chat (si es conocido)
 }
 
 // StatusEvent evento de cambio de estado
@@ -57,4 +59,10 @@ type ReceiptEvent struct {
 	Type      string   `json:"type"` // read, delivered
 	Timestamp int64    `json:"timestamp"`
 	IDs       []string `json:"ids,omitempty"`
+}
+
+// SyncEvent evento de progreso de sincronización
+type SyncEvent struct {
+	Percentage int    `json:"percentage"`
+	SyncType   string `json:"sync_type"` // initial, recent, full
 }

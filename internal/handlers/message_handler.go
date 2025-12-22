@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -357,12 +358,20 @@ func (h *MessageHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// DownloadMedia maneja GET /instances/{instanceID}/messages/{messageID}/media
+// DownloadMedia maneja POST /instances/{instanceID}/messages/download
 func (h *MessageHandler) DownloadMedia(w http.ResponseWriter, r *http.Request) {
 	instanceID := chi.URLParam(r, "instanceID")
-	messageID := chi.URLParam(r, "messageID")
 
-	data, filename, mimetype, err := h.service.DownloadMedia(r.Context(), instanceID, messageID)
+	var req models.DownloadMediaRequest
+	if err := json.NewDecoder(r.Context().Value("body").(io.ReadCloser)).Decode(&req); err != nil {
+		// Si el middleware no inyectó el body, lo leemos directamente
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("Cuerpo de solicitud inválido: "+err.Error()))
+			return
+		}
+	}
+
+	data, err := h.service.DownloadMedia(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
@@ -372,7 +381,12 @@ func (h *MessageHandler) DownloadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", mimetype)
+	filename := "media"
+	if req.Type != "" {
+		filename += "." + req.Type
+	}
+
+	w.Header().Set("Content-Type", req.Mimetype)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	w.Write(data)
 }
@@ -468,6 +482,35 @@ func (h *MessageHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response, err := h.service.MarkAsRead(r.Context(), instanceID, &req)
+	if err != nil {
+		if appErr, ok := err.(*errors.AppError); ok {
+			errors.WriteJSON(w, appErr)
+		} else {
+			errors.WriteJSON(w, errors.ErrInternalServer.WithDetails(err.Error()))
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// Edit maneja POST /instances/{instanceID}/messages/edit
+func (h *MessageHandler) Edit(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+
+	var req models.EditMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("JSON inválido"))
+		return
+	}
+
+	if req.Phone == "" || req.MessageID == "" || req.NewText == "" {
+		errors.WriteJSON(w, errors.ErrBadRequest.WithDetails("phone, message_id y new_text son requeridos"))
+		return
+	}
+
+	response, err := h.service.EditMessage(r.Context(), instanceID, &req)
 	if err != nil {
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)

@@ -198,3 +198,17 @@ func (h *ContactHandler) GetAbout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+// GetBlocklist maneja GET /instances/{instanceID}/contacts/blocklist
+func (h *ContactHandler) GetBlocklist(w http.ResponseWriter, r *http.Request) {
+	instanceID := chi.URLParam(r, "instanceID")
+
+	resp, err := h.service.GetBlocklist(r.Context(), instanceID)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}

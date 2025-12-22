@@ -36,6 +36,7 @@ var (
 	ErrInstanceExists     = &AppError{Code: http.StatusConflict, Message: "La instancia ya existe"}
 	ErrNotAuthenticated   = &AppError{Code: http.StatusUnauthorized, Message: "Instancia no autenticada"}
 	ErrDatabaseLocked     = &AppError{Code: http.StatusServiceUnavailable, Message: "Base de datos ocupada, intente nuevamente"}
+	ErrRateLimitReached   = &AppError{Code: http.StatusTooManyRequests, Message: "Límite de mensajes alcanzado, reintentando asíncronamente"}
 )
 
 // New crea un nuevo error personalizado

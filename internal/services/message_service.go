@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -13,7 +12,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mau.fi/whatsmeow"
-	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/proto/waCommon"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 
@@ -46,19 +46,19 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 		return nil, errors.ErrInstanceNotFound
 	}
 
-	if !client.WAClient.IsLoggedIn() {
-		return nil, errors.ErrNotAuthenticated
-	}
-
 	// Validar y limpiar número de teléfono
 	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
 	if err != nil {
 		return nil, err
 	}
 
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
 	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	msg := &waProto.Message{
+	msg := &waE2E.Message{
 		Conversation: proto.String(req.Message),
 	}
 
@@ -109,9 +109,9 @@ func (s *MessageService) SendText(ctx context.Context, instanceID string, req *m
 	}, nil
 }
 
-// helperDownloadMediaBytes descarga o decodifica los bytes del medio
+// HelperDownloadMediaBytes descarga o decodifica los bytes del medio
 // Incluye validaciones de seguridad: límite de tamaño y prevención de SSRF
-func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, string, error) {
+func (s *MessageService) HelperDownloadMediaBytes(mediaSource string) ([]byte, string, error) {
 	// Límite de tamaño: 50MB (ajustable según necesidades)
 	const maxSize = 50 * 1024 * 1024 // 50MB
 
@@ -188,8 +188,8 @@ func (s *MessageService) helperDownloadMediaBytes(mediaSource string) ([]byte, s
 // SendImage envía una imagen
 func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil || !client.WAClient.IsLoggedIn() {
-		return nil, errors.ErrNotAuthenticated
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
 	}
 
 	// Validar y limpiar número de teléfono
@@ -198,7 +198,11 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 		return nil, err
 	}
 
-	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	data, mimeType, err := s.HelperDownloadMediaBytes(req.MediaURL)
 	if err != nil {
 		return nil, errors.ErrBadRequest.WithDetails(err.Error())
 	}
@@ -209,8 +213,8 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 	}
 
 	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
-	msg := &waProto.Message{
-		ImageMessage: &waProto.ImageMessage{
+	msg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
@@ -237,20 +241,40 @@ func (s *MessageService) SendImage(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando imagen: %v", err))
 	}
 
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    req.Caption,
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeImage),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando imagen enviada en DB")
+	}
+
 	log.Info().
 		Str("instance_id", instanceID).
 		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 		Str("message_id", resp.ID).
 		Msg("Imagen enviada exitosamente")
 
-	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    string(models.MessageStatusSent),
+	}, nil
 }
 
 // SendVideo envía un video
 func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil || !client.WAClient.IsLoggedIn() {
-		return nil, errors.ErrNotAuthenticated
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
 	}
 
 	// Validar y limpiar número de teléfono
@@ -259,7 +283,11 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 		return nil, err
 	}
 
-	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	data, mimeType, err := s.HelperDownloadMediaBytes(req.MediaURL)
 	if err != nil {
 		return nil, errors.ErrBadRequest.WithDetails(err.Error())
 	}
@@ -270,8 +298,8 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 	}
 
 	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
-	msg := &waProto.Message{
-		VideoMessage: &waProto.VideoMessage{
+	msg := &waE2E.Message{
+		VideoMessage: &waE2E.VideoMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
@@ -298,23 +326,53 @@ func (s *MessageService) SendVideo(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando video: %v", err))
 	}
 
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    req.Caption,
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeVideo),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando video enviado en DB")
+	}
+
 	log.Info().
 		Str("instance_id", instanceID).
 		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 		Str("message_id", resp.ID).
 		Msg("Video enviado exitosamente")
 
-	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    string(models.MessageStatusSent),
+	}, nil
 }
 
 // SendAudio envía un audio (nota de voz o audio general)
 func (s *MessageService) SendAudio(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil || !client.WAClient.IsLoggedIn() {
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	data, mimeType, err := s.HelperDownloadMediaBytes(req.MediaURL)
 	if err != nil {
 		return nil, errors.ErrBadRequest.WithDetails(err.Error())
 	}
@@ -324,9 +382,9 @@ func (s *MessageService) SendAudio(ctx context.Context, instanceID string, req *
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo audio: %v", err))
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
-	msg := &waProto.Message{
-		AudioMessage: &waProto.AudioMessage{
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
+	msg := &waE2E.Message{
+		AudioMessage: &waE2E.AudioMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
@@ -340,20 +398,66 @@ func (s *MessageService) SendAudio(ctx context.Context, instanceID string, req *
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando audio")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
+
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando audio: %v", err))
 	}
 
-	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    "Audio Message",
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeAudio),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando audio enviado en DB")
+	}
+
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("message_id", resp.ID).
+		Msg("Audio enviado exitosamente")
+
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    string(models.MessageStatusSent),
+	}, nil
 }
 
 // SendDocument envía un documento
 func (s *MessageService) SendDocument(ctx context.Context, instanceID string, req *models.SendMediaRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil || !client.WAClient.IsLoggedIn() {
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	data, mimeType, err := s.helperDownloadMediaBytes(req.MediaURL)
+	data, mimeType, err := s.HelperDownloadMediaBytes(req.MediaURL)
 	if err != nil {
 		return nil, errors.ErrBadRequest.WithDetails(err.Error())
 	}
@@ -363,9 +467,9 @@ func (s *MessageService) SendDocument(ctx context.Context, instanceID string, re
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error subiendo documento: %v", err))
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
-	msg := &waProto.Message{
-		DocumentMessage: &waProto.DocumentMessage{
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
+	msg := &waE2E.Message{
+		DocumentMessage: &waE2E.DocumentMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
@@ -380,10 +484,46 @@ func (s *MessageService) SendDocument(ctx context.Context, instanceID string, re
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando documento")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
+
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando documento: %v", err))
 	}
 
-	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    req.FileName,
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeDocument),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando documento enviado en DB")
+	}
+
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("message_id", resp.ID).
+		Msg("Documento enviado exitosamente")
+
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    string(models.MessageStatusSent),
+	}, nil
 }
 
 // SendLocation envía una ubicación
@@ -393,14 +533,20 @@ func (s *MessageService) SendLocation(ctx context.Context, instanceID string, re
 		return nil, errors.ErrInstanceNotFound
 	}
 
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	msg := &waProto.Message{
-		LocationMessage: &waProto.LocationMessage{
+	msg := &waE2E.Message{
+		LocationMessage: &waE2E.LocationMessage{
 			DegreesLatitude:  proto.Float64(req.Latitude),
 			DegreesLongitude: proto.Float64(req.Longitude),
 			Name:             proto.String(req.Name),
@@ -413,15 +559,35 @@ func (s *MessageService) SendLocation(ctx context.Context, instanceID string, re
 		log.Error().
 			Err(err).
 			Str("instance_id", instanceID).
-			Str("recipient", req.Phone).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 			Msg("Error enviando ubicación")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando ubicación: %v", err))
 	}
 
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    fmt.Sprintf("Lat: %f, Long: %f", req.Latitude, req.Longitude),
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeLocation),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando ubicación enviada en DB")
+	}
+
 	log.Info().
 		Str("instance_id", instanceID).
-		Str("recipient", req.Phone).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
 		Str("message_id", resp.ID).
 		Msg("Ubicación enviada exitosamente")
 
@@ -435,14 +601,24 @@ func (s *MessageService) SendLocation(ctx context.Context, instanceID string, re
 // SendContact envía un contacto (vCard)
 func (s *MessageService) SendContact(ctx context.Context, instanceID string, req *models.SendContactRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
-	if client == nil || !client.WAClient.IsLoggedIn() {
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	msg := &waProto.Message{
-		ContactMessage: &waProto.ContactMessage{
+	msg := &waE2E.Message{
+		ContactMessage: &waE2E.ContactMessage{
 			DisplayName: proto.String(req.DisplayName),
 			Vcard:       proto.String(req.VCard),
 		},
@@ -450,28 +626,67 @@ func (s *MessageService) SendContact(ctx context.Context, instanceID string, req
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando contacto")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando contacto: %v", err))
 	}
 
-	return &models.MessageResponse{Success: true, MessageID: resp.ID, Status: "sent"}, nil
+	// Guardar en DB
+	message := &models.Message{
+		ID:         resp.ID,
+		InstanceID: instanceID,
+		To:         recipientJID.String(),
+		From:       "me",
+		Content:    fmt.Sprintf("Contact: %s", req.DisplayName),
+		Timestamp:  resp.Timestamp.Unix(),
+		Type:       string(models.MessageTypeContact),
+		IsFromMe:   true,
+		Status:     string(models.MessageStatusSent),
+	}
+	if err := s.msgRepo.Create(ctx, message); err != nil {
+		log.Error().Err(err).Msg("Error guardando contacto enviado en DB")
+	}
+
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    string(models.MessageStatusSent),
+	}, nil
 }
 
-// ReactToMessage reacciona a un mensaje
+// ReactToMessage es mi implementación para reaccionar a mensajes existentes.
+// Aquí construyo manualmente el mensaje de reacción usando la nueva estructura de waE2E,
+// asegurándome de incluir el timestamp actual para que WhatsApp lo procese correctamente.
 func (s *MessageService) ReactToMessage(ctx context.Context, instanceID string, req *models.ReactionRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
 
+	// Primero valido el número para no intentar enviar nada a un destino inválido.
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	msg := &waProto.Message{
-		ReactionMessage: &waProto.ReactionMessage{
-			Key: &waProto.MessageKey{
+	// Armo el mensaje de reacción. Me ha tocado usar waCommon.MessageKey porque
+	// en la nueva versión de whatsmeow la llave del mensaje se movió de paquete.
+	msg := &waE2E.Message{
+		ReactionMessage: &waE2E.ReactionMessage{
+			Key: &waCommon.MessageKey{
 				RemoteJID: proto.String(recipientJID.String()),
 				FromMe:    proto.Bool(true),
 				ID:        proto.String(req.MessageID),
@@ -483,85 +698,116 @@ func (s *MessageService) ReactToMessage(ctx context.Context, instanceID string, 
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Tuve un fallo al enviar la reacción")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando reacción: %v", err))
 	}
 
 	return &models.MessageResponse{
 		Success:   true,
 		MessageID: resp.ID,
-		Status:    string(models.MessageStatusSent),
+		Status:    "sent",
 	}, nil
 }
 
-// RevokeMessage elimina un mensaje enviado (para todos)
+// RevokeMessage es mi método para eliminar mensajes ya enviados.
+// Básicamente envío un ProtocolMessage de tipo REVOKE. Al igual que con las reacciones,
+// aquí también uso waCommon.MessageKey para apuntar al mensaje original.
 func (s *MessageService) RevokeMessage(ctx context.Context, instanceID string, req *models.RevokeRequest) (*models.MessageResponse, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
 
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	msg := &waProto.Message{
-		ProtocolMessage: &waProto.ProtocolMessage{
-			Key: &waProto.MessageKey{
+	// Construyo el mensaje de protocolo para la revocación. Es importante que el ID
+	// coincida exactamente con el que queremos borrar.
+	msg := &waE2E.Message{
+		ProtocolMessage: &waE2E.ProtocolMessage{
+			Key: &waCommon.MessageKey{
 				RemoteJID: proto.String(recipientJID.String()),
 				FromMe:    proto.Bool(true),
 				ID:        proto.String(req.MessageID),
 			},
-			Type: waProto.ProtocolMessage_REVOKE.Enum(),
+			Type: waE2E.ProtocolMessage_REVOKE.Enum(),
 		},
 	}
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Fallo al intentar revocar el mensaje")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error revocando mensaje: %v", err))
 	}
 
 	return &models.MessageResponse{
 		Success:   true,
 		MessageID: resp.ID,
-		Status:    string(models.MessageStatusSent),
+		Status:    "revoked",
 	}, nil
 }
 
-// CreatePoll crea una encuesta
+// CreatePoll es mi forma de crear nuevas encuestas.
+// Me apoyo en el helper oficial de whatsmeow (BuildPollCreation) que me facilita
+// mucho la vida al no tener que armar el mensaje bit a bit.
 func (s *MessageService) CreatePoll(ctx context.Context, instanceID string, req *models.CreatePollRequest) (*models.PollResponse, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
+
+	// Limpio el número como siempre para evitar líos con el formato.
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	// Construir opciones de la encuesta
-	pollOptions := make([]*waProto.PollCreationMessage_Option, len(req.Options))
-	for i, option := range req.Options {
-		pollOptions[i] = &waProto.PollCreationMessage_Option{
-			OptionName: proto.String(option),
-		}
-	}
+	// Aquí es donde el SDK se encarga de todo lo pesado de construir la encuesta.
+	// Solo le paso la pregunta, las opciones y cuántas se pueden elegir.
+	msg := client.WAClient.BuildPollCreation(req.Question, req.Options, int(req.SelectableCount))
 
-	// Crear mensaje de encuesta
-	pollCreation := &waProto.PollCreationMessage{
-		Name:                   proto.String(req.Question),
-		Options:                pollOptions,
-		SelectableOptionsCount: proto.Uint32(req.SelectableCount),
-	}
-
-	msg := &waProto.Message{
-		PollCreationMessage: pollCreation,
-	}
-
+	// Finalmente lo mando y capturo cualquier error, especialmente los de base de datos bloqueada.
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("No pude enviar la encuesta")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando encuesta: %v", err))
 	}
 
@@ -571,44 +817,51 @@ func (s *MessageService) CreatePoll(ctx context.Context, instanceID string, req 
 	}, nil
 }
 
-// VotePoll vota en una encuesta
+// VotePoll permite votar en una encuesta.
+// Para esto, necesito recrear un MessageInfo básico del mensaje original.
 func (s *MessageService) VotePoll(ctx context.Context, instanceID string, req *models.VotePollRequest) (*models.PollResponse, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
 	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	if !client.WAClient.IsLoggedIn() {
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	recipientJID := types.NewJID(req.Phone, types.DefaultUserServer)
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
-	// Construir opciones seleccionadas (hashes SHA256 de los nombres)
-	// WhatsApp usa SHA256 de los nombres de opciones como identificadores
-	selectedOptions := make([][]byte, len(req.OptionNames))
-	for i, optionName := range req.OptionNames {
-		hash := sha256.Sum256([]byte(optionName))
-		selectedOptions[i] = hash[:]
+	// Como no guardo todo el objeto MessageInfo en mi DB, armo este "esqueleto"
+	// que es lo mínimo que me pide whatsmeow para identificar a qué encuesta estamos votando.
+	pollInfo := &types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat: recipientJID,
+		},
+		ID: req.MessageID,
 	}
 
-	// Crear mensaje de voto
-	pollUpdate := &waProto.PollUpdateMessage{
-		PollCreationMessageKey: &waProto.MessageKey{
-			RemoteJID: proto.String(recipientJID.String()),
-			FromMe:    proto.Bool(false), // La encuesta fue creada por otro usuario
-			ID:        proto.String(req.MessageID),
-		},
-		Vote: &waProto.PollEncValue{
-			EncPayload: selectedOptions[0], // Simplificado: solo primera opción
-		},
-	}
-
-	msg := &waProto.Message{
-		PollUpdateMessage: pollUpdate,
+	// Llamo al helper para construir el mensaje de voto. Es mucho más limpio así.
+	msg, err := client.WAClient.BuildPollVote(ctx, pollInfo, req.OptionNames)
+	if err != nil {
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Me fue imposible construir el voto: %v", err))
 	}
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Tuve un error al votar")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error votando en encuesta: %v", err))
 	}
 
@@ -618,36 +871,8 @@ func (s *MessageService) VotePoll(ctx context.Context, instanceID string, req *m
 	}, nil
 }
 
-// DownloadMedia descarga un archivo multimedia bajo demanda
-func (s *MessageService) DownloadMedia(ctx context.Context, instanceID string, messageID string) ([]byte, string, string, error) {
-	client := s.waManager.GetClient(instanceID)
-	if client == nil {
-		return nil, "", "", errors.ErrInstanceNotFound
-	}
-	if !client.WAClient.IsLoggedIn() {
-		return nil, "", "", errors.ErrNotAuthenticated
-	}
-
-	// NOTA IMPORTANTE: La descarga bajo demanda requiere guardar los metadatos
-	// completos del mensaje de WhatsApp (DirectPath, MediaKey, FileEncSha256, etc.)
-	// que contienen la información necesaria para descargar y desencriptar el archivo.
-	//
-	// Actualmente, solo guardamos el contenido del mensaje en texto, no los metadatos
-	// binarios necesarios para la descarga.
-	//
-	// SOLUCIÓN RECOMENDADA: Aumentar los límites de inline (16MB/50MB) para que
-	// la mayoría de archivos se envíen directamente en el webhook en Base64.
-	//
-	// Para implementar descarga bajo demanda en el futuro, se necesitaría:
-	// 1. Guardar los metadatos del mensaje original en la BD
-	// 2. Reconstruir el DownloadableMessage desde esos metadatos
-	// 3. Llamar a client.WAClient.Download() con ese mensaje
-
-	return nil, "", "", errors.New(501, "Descarga bajo demanda no implementada. Los archivos multimedia se envían inline en el webhook (hasta 16MB para imágenes/videos/audio, 50MB para documentos).")
-}
-
-// SendTextWithTyping envía un mensaje de texto con simulación de escritura
-func (s *MessageService) SendTextWithTyping(ctx context.Context, instanceID string, req *models.SendTextWithTypingRequest) (*models.MessageResponse, error) {
+// DownloadMedia descarga un archivo multimedia
+func (s *MessageService) DownloadMedia(ctx context.Context, instanceID string, req *models.DownloadMediaRequest) ([]byte, error) {
 	client := s.waManager.GetClient(instanceID)
 	if client == nil {
 		return nil, errors.ErrInstanceNotFound
@@ -656,14 +881,105 @@ func (s *MessageService) SendTextWithTyping(ctx context.Context, instanceID stri
 		return nil, errors.ErrNotAuthenticated
 	}
 
-	// Construir JID del destinatario
-	recipientJID, err := types.ParseJID(req.Phone)
+	// Decodificar Base64 de las llaves
+	mediaKey, err := base64.StdEncoding.DecodeString(req.MediaKey)
 	if err != nil {
-		recipientJID, err = types.ParseJID(req.Phone + "@s.whatsapp.net")
-		if err != nil {
-			return nil, errors.ErrBadRequest.WithDetails("Número de teléfono inválido")
-		}
+		return nil, fmt.Errorf("error decodificando media_key: %v", err)
 	}
+	fileEncSha256, err := base64.StdEncoding.DecodeString(req.FileEncSha256)
+	if err != nil {
+		return nil, fmt.Errorf("error decodificando file_enc_sha256: %v", err)
+	}
+	fileSha256, err := base64.StdEncoding.DecodeString(req.FileSha256)
+	if err != nil {
+		return nil, fmt.Errorf("error decodificando file_sha256: %v", err)
+	}
+
+	// Reconstruir metadatos del mensaje para la descarga
+	// WhatsApp usa diferentes estructuras según el tipo
+	var downloadable whatsmeow.DownloadableMessage
+
+	switch req.Type {
+	case "image":
+		downloadable = &waE2E.ImageMessage{
+			DirectPath:    proto.String(req.DirectPath),
+			URL:           proto.String(req.Url),
+			MediaKey:      mediaKey,
+			FileEncSHA256: fileEncSha256,
+			FileSHA256:    fileSha256,
+			FileLength:    proto.Uint64(req.FileLength),
+			Mimetype:      proto.String(req.Mimetype),
+		}
+	case "video":
+		downloadable = &waE2E.VideoMessage{
+			DirectPath:    proto.String(req.DirectPath),
+			URL:           proto.String(req.Url),
+			MediaKey:      mediaKey,
+			FileEncSHA256: fileEncSha256,
+			FileSHA256:    fileSha256,
+			FileLength:    proto.Uint64(req.FileLength),
+			Mimetype:      proto.String(req.Mimetype),
+		}
+	case "audio":
+		downloadable = &waE2E.AudioMessage{
+			DirectPath:    proto.String(req.DirectPath),
+			URL:           proto.String(req.Url),
+			MediaKey:      mediaKey,
+			FileEncSHA256: fileEncSha256,
+			FileSHA256:    fileSha256,
+			FileLength:    proto.Uint64(req.FileLength),
+			Mimetype:      proto.String(req.Mimetype),
+		}
+	case "document":
+		downloadable = &waE2E.DocumentMessage{
+			DirectPath:    proto.String(req.DirectPath),
+			URL:           proto.String(req.Url),
+			MediaKey:      mediaKey,
+			FileEncSHA256: fileEncSha256,
+			FileSHA256:    fileSha256,
+			FileLength:    proto.Uint64(req.FileLength),
+			Mimetype:      proto.String(req.Mimetype),
+		}
+	case "sticker":
+		downloadable = &waE2E.StickerMessage{
+			DirectPath:    proto.String(req.DirectPath),
+			URL:           proto.String(req.Url),
+			MediaKey:      mediaKey,
+			FileEncSHA256: fileEncSha256,
+			FileSHA256:    fileSha256,
+			FileLength:    proto.Uint64(req.FileLength),
+			Mimetype:      proto.String(req.Mimetype),
+		}
+	default:
+		return nil, fmt.Errorf("tipo de media no soportado: %s", req.Type)
+	}
+
+	// Realizar la descarga y desencriptación
+	data, err := client.WAClient.Download(ctx, downloadable)
+	if err != nil {
+		return nil, fmt.Errorf("error descargando media: %v", err)
+	}
+
+	return data, nil
+}
+
+// SendTextWithTyping envía un mensaje de texto con simulación de escritura
+func (s *MessageService) SendTextWithTyping(ctx context.Context, instanceID string, req *models.SendTextWithTypingRequest) (*models.MessageResponse, error) {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+	// Validar y limpiar número de teléfono
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
 
 	// Calcular duración de typing si no se proporcionó
 	typingDuration := 0
@@ -696,12 +1012,21 @@ func (s *MessageService) SendTextWithTyping(ctx context.Context, instanceID stri
 	}
 
 	// 4. Enviar el mensaje de texto
-	msg := &waProto.Message{
+	msg := &waE2E.Message{
 		Conversation: proto.String(req.Message),
 	}
 
 	resp, err := client.WAClient.SendMessage(ctx, recipientJID, msg)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("instance_id", instanceID).
+			Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+			Msg("Error enviando mensaje con typing")
+
+		if helpers.IsDatabaseLockedError(err) {
+			return nil, errors.ErrDatabaseLocked
+		}
 		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error enviando mensaje: %v", err))
 	}
 
@@ -709,23 +1034,29 @@ func (s *MessageService) SendTextWithTyping(ctx context.Context, instanceID stri
 	dbMsg := &models.Message{
 		ID:         resp.ID,
 		InstanceID: instanceID,
-		From:       client.WAClient.Store.ID.User,
-		To:         recipientJID.User,
-		Type:       "text",
+		From:       "me",
+		To:         recipientJID.String(),
+		Type:       string(models.MessageTypeText),
 		Content:    req.Message,
 		Timestamp:  resp.Timestamp.Unix(),
 		IsFromMe:   true,
-		Status:     "sent",
+		Status:     string(models.MessageStatusSent),
 	}
 
 	if err := s.msgRepo.Create(ctx, dbMsg); err != nil {
 		log.Error().Err(err).Msg("Error guardando mensaje en DB")
 	}
 
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("message_id", resp.ID).
+		Msg("Mensaje con typing enviado exitosamente")
+
 	return &models.MessageResponse{
 		Success:   true,
 		MessageID: resp.ID,
-		Status:    "sent",
+		Status:    string(models.MessageStatusSent),
 	}, nil
 }
 
@@ -764,5 +1095,51 @@ func (s *MessageService) MarkAsRead(ctx context.Context, instanceID string, req 
 		Success:   true,
 		MessageID: req.MessageID,
 		Status:    "read",
+	}, nil
+}
+
+// EditMessage edita un mensaje de texto enviado previamente.
+// Solo se pueden editar mensajes propios dentro de un periodo de tiempo (usualmente 15 min).
+// He implementado esto usando el helper BuildEdit de whatsmeow, que encapsula correctamente
+// la estructura de ProtocolMessage necesaria.
+func (s *MessageService) EditMessage(ctx context.Context, instanceID string, req *models.EditMessageRequest) (*models.MessageResponse, error) {
+	client := s.waManager.GetClient(instanceID)
+	if client == nil {
+		return nil, errors.ErrInstanceNotFound
+	}
+
+	cleanPhone, err := validators.ValidatePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
+	if !client.WAClient.IsLoggedIn() {
+		return nil, errors.ErrNotAuthenticated
+	}
+
+	recipientJID := types.NewJID(cleanPhone, types.DefaultUserServer)
+
+	log.Info().
+		Str("instance_id", instanceID).
+		Str("recipient", validators.MaskPhoneNumber(cleanPhone)).
+		Str("original_id", req.MessageID).
+		Msg("Editando mensaje")
+
+	// Construimos el mensaje de edición.
+	// whatsmeow requiere el JID, el ID original y el nuevo contenido.
+	editMsg := client.WAClient.BuildEdit(recipientJID, req.MessageID, &waE2E.Message{
+		Conversation: proto.String(req.NewText),
+	})
+
+	resp, err := client.WAClient.SendMessage(ctx, recipientJID, editMsg)
+	if err != nil {
+		log.Error().Err(err).Str("instance_id", instanceID).Str("msg_id", req.MessageID).Msg("Error editando mensaje")
+		return nil, errors.ErrInternalServer.WithDetails(fmt.Sprintf("Error editando mensaje: %v", err))
+	}
+
+	return &models.MessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+		Status:    "edited",
 	}, nil
 }
