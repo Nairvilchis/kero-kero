@@ -1,4 +1,4 @@
-# 📘 Guía Maestra de Desarrollo: Dashboard Kero-Kero (Next.js + App Router)
+# 📘 Guía Maestra de Desarrollo: Dashboard Kero-Kero (Api Server)
 
 Esta guía detalla la implementación de un Dashboard profesional para la gestión de instancias de WhatsApp utilizando la API Server de Kero-Kero.
 
@@ -18,7 +18,7 @@ Esta guía detalla la implementación de un Dashboard profesional para la gesti�
 
 ## 📡 Cliente API y Autenticación
 
-La API utiliza autenticación vía Header `X-Api-Key` o JWT bearer (según configuración). El dashboard debe configurarse para manejar ambas estrategias, priorizando la seguridad.
+La API utiliza autenticación vía Header `X-Api-Key` o JWT bearer.
 
 ### Configuración Axios (`lib/api.ts`)
 ```typescript
@@ -32,15 +32,10 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  // Opción A: API Key global desde env (modo admin único)
+  // Configuración para usar API Key o JWT según corresponda
   if (process.env.NEXT_PUBLIC_API_KEY) {
      config.headers['X-Api-Key'] = process.env.NEXT_PUBLIC_API_KEY;
   }
-  
-  // Opción B: JWT desde sesión (modo multi-usuario)
-  // const token = useAuthStore.getState().token;
-  // if (token) config.headers['Authorization'] = `Bearer ${token}`;
-  
   return config;
 });
 
@@ -52,173 +47,178 @@ export default api;
 ## 🗺️ Mapa Completo de Endpoints API
 
 A continuación, se listan **todas** las rutas disponibles extraídas del código fuente del servidor.
-*Nota: La mayoría de las rutas requieren el prefijo `/instances/{instanceID}`.*
 
-### 1. Gestión de Instancias (`/instances`)
+### 1. Autenticación (`/auth`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/auth/login` | Login usuario | `{ "username": "...", "password": "..." }` (según implementación) |
+| `GET` | `/auth/validate` | Validar token actual | - |
+
+### 2. Gestión de Instancias (`/instances`)
+Rutas base para manejo de sesiones.
 | Método | Ruta | Descripción | Payload / Params |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/instances` | Crear nueva instancia | `{ "instance_id": "nombre", "sync_history": bool }` |
-| `GET` | `/instances` | Listar todas | - |
+| `POST` | `/` | Crear nueva instancia | `{ "instance_id": "nombre", "sync_history": bool }` |
+| `GET` | `/` | Listar todas | - |
 | `GET` | `/{id}` | Detalles instancia | - |
-| `PUT` | `/{id}` | Actualizar config (webhook) | `{ "webhook_url": "...", "events": [...] }` |
+| `PUT` | `/{id}` | Actualizar config | `{ "webhook_url": "...", "events": [...] }` |
 | `DELETE` | `/{id}` | Eliminar instancia | - |
 | `POST` | `/{id}/connect` | Iniciar conexión | - |
 | `POST` | `/{id}/disconnect` | Cerrar sesión | - |
 | `GET` | `/{id}/qr` | Obtener QR (Base64) | - |
-| `GET` | `/{id}/status` | Estado actual | Response: `{ "status": "connected"|"disconnected" }` |
+| `GET` | `/{id}/status` | Estado actual | Response: `{ "status": "..." }` |
 
-### 2. Mensajería (`/instances/{id}/messages`)
-Todos los endpoints son POST.
+### 3. Mensajería (`/instances/{id}/messages`)
+Todos los endpoints son POST. Usados para enviar mensajes.
 
 | Ruta Suffix | Descripción | Payload JSON |
 | :--- | :--- | :--- |
 | `/text` | Texto simple | `{ "to": "521...", "message": "Hola" }` |
 | `/text-with-typing` | Texto con simulación | `{ "to": "...", "message": "...", "duration": 2 }` |
-| `/image` | Enviar Imagen | `{ "to": "...", "url": "http...", "caption": "..." }` |
+| `/image` | Enviar Imagen | `{ "to": "...", "url": "...", "caption": "..." }` |
 | `/video` | Enviar Video | `{ "to": "...", "url": "...", "caption": "..." }` |
 | `/audio` | Enviar Audio (PTT) | `{ "to": "...", "url": "..." }` |
 | `/document` | Enviar Documento | `{ "to": "...", "url": "...", "filename": "doc.pdf" }` |
-| `/location` | Enviar Ubicación | `{ "to": "...", "latitude": 0.0, "longitude": 0.0 }` |
+| `/location` | Enviar Ubicación | `{ "to": "...", "latitude": 0.0, "longitude": 0.0, "name": "...", "address": "..." }` |
 | `/contact` | Enviar VCard | `{ "to": "...", "vcard": "BEGIN:VCARD..." }` |
 | `/react` | Reaccionar | `{ "message_id": "...", "reaction": "👍" }` |
-| `/revoke` | Eliminar para todos | `{ "message_id": "..." }` |
+| `/revoke` | Eliminar mensaje | `{ "message_id": "..." }` |
 | `/edit` | Editar mensaje | `{ "message_id": "...", "new_text": "..." }` |
-| `/mark-read` | Marcar leído | `{ "chat_jid": "...", "message_id": "..." }` |
+| `/mark-read` | Marcar leído | `{ "chat_jid": "...", "message_id": "...", "sender_jid": "..." }` |
+| `/download` | Descargar multimedia | `{ "message_id": "...", "type": "image" }` |
+| `/poll` | Crear Encuesta | `{ "to": "...", "name": "...", "options": ["..."], "selectable_count": 1 }` |
+| `/poll/vote` | Votar Encuesta | `{ "to": "...", "poll_id": "...", "option_ids": ["..."] }` |
 
-### 3. Chats e Historial (`/instances/{id}/chats`)
-Fundamental para la vista tipo "WhatsApp Web".
+### 4. Chats (`/instances/{id}/chats`)
+Gestión del listado de conversaciones.
 
-| Método | Ruta | Descripción |
-| :--- | :--- | :--- |
-| `GET` | `/` | Listar chats recientes (Inbox) |
-| `GET` | `/{jid}/messages` | Obtener historial de mensajes de un chat |
-| `DELETE` | `/{jid}` | Eliminar chat |
-| `POST` | `/{jid}/read` | Marcar chat completo como leído |
-| `POST` | `/archive` | Archivar chat |
-| `POST` | `/pin` | Fijar chat |
-| `POST` | `/mute` | Silenciar chat |
+| Método | Ruta | Descripción | Params |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Listar chats | `?page=1` |
+| `GET` | `/{jid}/messages` | Historial de mensajes | `?limit=50&offset=0` |
+| `DELETE` | `/{jid}` | Eliminar chat | - |
+| `POST` | `/archive` | Archivar chat | `{ "jid": "...", "archived": true }` |
+| `POST` | `/status` | Actualizar estado | - |
+| `POST` | `/{jid}/read` | Marcar como leído | - |
+| `POST` | `/mute` | Silenciar chat | `{ "jid": "...", "duration": 8h }` |
+| `POST` | `/pin` | Fijar chat | `{ "jid": "...", "pinned": true }` |
 
-### 4. Contactos (`/instances/{id}/contacts`)
+### 5. Contactos (`/instances/{id}/contacts`)
 | Método | Ruta | Descripción | Payload |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/` | Listar contactos guardados | `?page=1&limit=50` |
-| `POST` | `/check` | Verificar si tienen WhatsApp | `{ "phones": ["..."] }` |
+| `GET` | `/` | Listar contactos | `?page=1&limit=50` |
+| `GET` | `/blocklist` | Listar bloqueados | - |
+| `POST` | `/check` | Verificar si tienen WA | `{ "phones": ["..."] }` |
+| `POST` | `/check-numbers` | Igual a check | - |
 | `GET` | `/{phone}` | Info detallada | - |
+| `GET` | `/{phone}/about` | Estado (About) | - |
 | `GET` | `/{phone}/profile-picture` | URL foto perfil | - |
+| `POST` | `/presence/subscribe` | Suscribirse a presencia | `{ "phones": [...] }` |
 | `POST` | `/block` | Bloquear usuario | `{ "phone": "..." }` |
 | `POST` | `/unblock` | Desbloquear | `{ "phone": "..." }` |
 
-### 5. Grupos (`/instances/{id}/groups`)
-| Método | Ruta | Descripción |
-| :--- | :--- | :--- |
-| `GET` | `/` | Listar grupos |
-| `POST` | `/` | Crear grupo `{ "subject": "...", "participants": [] }` |
-| `GET` | `/{gid}` | Info grupo (metadatos) |
-| `GET` | `/{gid}/invite` | Obtener enlace invitación |
-| `POST` | `/join` | Unirse vía enlace |
-| `POST` | `/{gid}/participants` | Agregar participantes |
-| `POST` | `/{gid}/leave` | Salir del grupo |
+### 6. Grupos (`/instances/{id}/groups`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Listar grupos | - |
+| `POST` | `/` | Crear grupo | `{ "subject": "...", "participants": [] }` |
+| `POST` | `/join` | Unirse vía link | `{ "code": "..." }` |
+| `GET` | `/{gid}` | Info grupo | - |
+| `PUT` | `/{gid}` | Actualizar Info | `{ "subject": "..." }` |
+| `PUT` | `/{gid}/picture` | Actualizar Foto | `{ "url": "..." }` |
+| `POST` | `/{gid}/leave` | Salir del grupo | - |
+| `GET` | `/{gid}/invite` | Obtener link | - |
+| `POST` | `/{gid}/invite/revoke` | Revocar link | - |
+| `POST` | `/{gid}/participants` | Añadir participantes | `{ "participants": ["..."] }` |
+| `DELETE` | `/{gid}/participants` | Remover participantes | `{ "participants": ["..."] }` |
+| `PATCH` | `/{gid}/participants` | Actualizar participantes | `{ "action": "add/remove", ... }` |
+| `POST` | `/{gid}/admins` | Promover a admin | `{ "participants": ["..."] }` |
+| `DELETE` | `/{gid}/admins` | Degradar admin | `{ "participants": ["..."] }` |
+| `PUT` | `/{gid}/settings` | Configuración | `{ "announce": bool, "locked": bool }` |
 
-### 6. Automatización y Negocio
-*   **Automation** (`/automation`):
-    *   `POST /bulk-message`: Envío masivo.
-    *   `POST /auto-reply`: Configurar autorespuesta simple.
-*   **Business** (`/business`):
-    *   `GET /profile`: Perfil de negocio.
-    *   `POST /labels`: Gestión de etiquetas.
-    *   `GET/POST /autolabel/rules`: Reglas para etiquetar chats automáticamente.
+### 7. Automatización (`/instances/{id}/automation`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/bulk-message` | Envío masivo | `{ "numbers": [...], "message": ... }` |
+| `POST` | `/schedule-message` | Programar mensaje | `{ "to": "...", "message": "...", "send_at": "timestamp" }` |
+| `POST` | `/auto-reply` | Configurar autorespuesta | `{ "match": "...", "response": "..." }` |
+| `GET` | `/auto-reply` | Ver config actual | - |
+
+### 8. Gestión de Negocio (`/instances/{id}/business`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/profile` | Perfil de negocio | - |
+| `POST` | `/labels` | Crear etiqueta | `{ "name": "...", "color": "..." }` |
+| `POST` | `/labels/assign` | Asignar etiqueta | `{ "chat_jid": "...", "label_id": "..." }` |
+| `GET` | `/autolabel/rules` | Ver reglas autolabel | - |
+| `POST` | `/autolabel/rules` | Crear reglas | `{ "keywords": [...], "label_id": "..." }` |
+
+### 9. Canales / Newsletters (`/instances/{id}/newsletters`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/` | Crear Canal | `{ "name": "...", "description": "..." }` |
+| `GET` | `/` | Listar Suscritos | - |
+| `POST` | `/send` | Enviar a Canal | `{ "jid": "...", "content": "..." }` |
+| `GET` | `/{jid}` | Info Canal | - |
+| `POST` | `/{jid}/follow` | Seguir | - |
+| `POST` | `/{jid}/unfollow` | Dejar de seguir | - |
+
+### 10. Presencia (`/instances/{id}/presence`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/start` | Iniciar (escribiendo/grabando) | `{ "to": "...", "state": "composing"|"recording"|"paused" }` |
+| `POST` | `/stop` | Detener | `{ "to": "..." }` |
+| `POST` | `/timed` | Presencia temporal | `{ "to": "...", "duration": 5 }` |
+| `POST` | `/status` | Configurar estado online | `{ "status": "available"|"unavailable" }` |
+
+### 11. Estados de WhatsApp (`/instances/{id}/status`)
+Rutas para publicar "Historias/Estados". No confundir con el status de conexión.
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/` | Publicar Estado | `{ "message": "...", "background_color": "#..." }` |
+| `GET` | `/privacy` | Ver privacidad estados | - |
+
+### 12. Sincronización Histórica (`/instances/{id}/sync`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/` | Forzar Sync Historial | `{ "full": true|false }` |
+| `GET` | `/progress` | Ver progreso % | - |
+| `DELETE` | `/` | Cancelar Sync | - |
+
+### 13. Llamadas (`/instances/{id}/calls`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/reject` | Rechazar llamada entrante | `{ "call_id": "...", "call_from": "..." }` |
+| `GET` | `/settings` | Configuración llamadas | - |
+| `PUT` | `/settings` | Actualizar config | `{ "reject_all": true, "reject_message": "..." }` |
+
+### 14. Privacidad (`/instances/{id}/privacy`)
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Ver Config de Privacidad | (LastSeen, Profile, Status, ReadReceipts, Groups) |
+| `PUT` | `/` | Actualizar Privacidad | `{ "last_seen": "all"|"contacts"|"none", ... }` |
+
+### 15. Webhooks (`/instances/{id}/webhook`)
+Configuración específica por instancia.
+| Método | Ruta | Descripción | Payload |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/` | Configurar Webhook | `{ "url": "...", "events": ["message", "status"] }` |
+| `GET` | `/` | Ver Webhook actual | - |
+| `DELETE` | `/` | Eliminar Webhook | - |
 
 ---
 
-## 🏗️ Estructura del Proyecto Next.js
+## 🏗️ Estructura del Frontend (Sugerida)
 
 ```
 app/
-├── (auth)/                 # Layout de autenticación (si aplica)
-│   └── login/
-├── (dashboard)/            # Layout principal con Sidebar
-│   ├── layout.tsx          # Provider de estado, Sidebar, Header
-│   ├── page.tsx            # Dashboard Home (Vista General)
-│   ├── instances/
-│   │   ├── page.tsx        # Lista de instancias (Cards)
-│   │   └── new/            # Crear instancia
-│   └── [instanceId]/       # Rutas dependientes de instancia
-│       ├── chat/           # 💬 CLAVE: Interfaz de Chat
-│       │   └── page.tsx
-│       ├── contacts/       # Agenda
-│       │   └── page.tsx
-│       ├── campaigns/      # Envíos masivos
-│       │   └── page.tsx
-│       ├── automation/     # Autorespuestas y Reglas
-│       │   └── page.tsx
-│       └── settings/       # Webhooks, Perfil, Privacidad
-│           └── page.tsx
-├── layout.tsx              # Root Layout
-└── globals.css
+├── (dashboard)/
+│   ├── [instanceId]/
+│   │   ├── chat/           # Usa /chats y /messages
+│   │   ├── contacts/       # Usa /contacts
+│   │   ├── groups/         # Usa /groups
+│   │   ├── status/         # Usa /status (Stories)
+│   │   ├── channels/       # Usa /newsletters
+│   │   ├── automation/     # Usa /automation
+│   │   └── settings/       # Usa /privacy, /calls, /business, /webhook
 ```
-
----
-
-## 🧩 Componentes Clave Sugeridos
-
-### 1. `InstanceGuard` (Layout)
-Componente que envuelve `app/[instanceId]/...` para:
-*   Validar que la instancia existe.
-*   Verificar su estado (`/status`).
-*   Mostrar un "DisconnectedOverlay" si la instancia no está conectada, impidiendo interactuar con módulos que requieren conexión (chats, mensajes).
-
-### 2. `ChatInterface` (Compositor Complejo)
-Ubicado en `/chat`. Debe replicar la experiencia de WhatsApp Web:
-*   **Sidebar Izquierdo**: Lista virtualizada de Chats (`GET /chats`).
-    *   Buscador.
-    *   Filtros (No leídos, Grupos).
-*   **Panel Derecho**: Lista de mensajes (`GET /chats/{jid}/messages`).
-    *   Scroll infinito inverso.
-    *   **WebSocket Listener**: Escuchar eventos `message` entrantes para hacer append real-time sin re-fetch.
-*   **Input Area**:
-    *   Soporte para emoji picker.
-    *   Upload de archivos (Drag & Drop) -> Llama a endpoints `/image`, `/document`, etc.
-    *   Grabadora de voz -> endpoint `/audio`.
-
-### 3. `QRCodeScanner`
-Componente que hace polling a `GET /{id}/qr` o usa WebSocket (si disponible) para mostrar el código QR. Debe manejar expiración y autoreload.
-
-### 4. `CampaignWizard`
-Formulario por pasos para `/automation/bulk-message`:
-1.  **Selección**: Elegir contactos (desde lista o CSV upload).
-2.  **Composición**: Escribir mensaje / media.
-3.  **Programación**: Definir delay aleatorio (importante para evitar bloqueos).
-4.  **Resumen**: Confirmar envío.
-
----
-
-## ⚡ Estrategia de Sincronización (Real-Time)
-
-El dashboard debe sentirse "vivo".
-1.  **WebSockets**: Si el servidor expone WS en `/ws`:
-    *   Conectar al abrir el dashboard.
-    *   Escuchar eventos:
-        *   `connection.update`: Actualizar estado de instancia (QR -> Connecting -> Connected).
-        *   `messages.upsert`: Nuevo mensaje -> Actualizar caché de React Query (`["chats", jid]`) e insertar en la UI.
-        *   `presence.update`: Mostrar "Escribiendo..." en la UI del chat.
-
-2.  **React Query**:
-    *   Usar `staleTime: Infinity` para chats históricos.
-    *   Invalidar queries manualmente al recibir eventos WS.
-
----
-
-## 📝 Próximos Pasos para Desarrollo
-
-1.  **Fase 1: Core & Conexión**
-    *   Setup Next.js dashboard layout.
-    *   CRUD Instancias.
-    *   Vista de QR y Conexión.
-2.  **Fase 2: Mensajería Básica**
-    *   Implementar `ChatInterface` básico (solo texto).
-    *   Listado de Chats.
-3.  **Fase 3: Mensajería Avanzada y Contactos**
-    *   Soporte Multimedia.
-    *   Gestión de Contactos.
-4.  **Fase 4: Automatización**
-    *   Campañas y Autorespuestas.
