@@ -29,9 +29,18 @@ func Init(level, format string) {
 
 	// Configurar formato
 	if format == "text" {
-		Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+		output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "2006-01-02T15:04:05Z07:00"}
+		if logLevel == zerolog.DebugLevel {
+			Logger = log.Output(output).With().Caller().Logger()
+		} else {
+			Logger = log.Output(output)
+		}
 	} else {
-		Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+		if logLevel == zerolog.DebugLevel {
+			Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
+		} else {
+			Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+		}
 	}
 
 	log.Logger = Logger

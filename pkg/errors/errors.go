@@ -2,19 +2,32 @@ package errors
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
 // AppError representa un error de la aplicación
 type AppError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Details string `json:"details,omitempty"`
+	Code     int    `json:"code"`
+	Message  string `json:"message"`
+	Details  string `json:"details,omitempty"`
+	RawError error  `json:"-"` // Error original para debugging interno
 }
 
 // Error implementa la interfaz error
 func (e *AppError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("%s: %s", e.Message, e.Details)
+	}
+	if e.RawError != nil {
+		return fmt.Sprintf("%s: %v", e.Message, e.RawError)
+	}
 	return e.Message
+}
+
+// Unwrap permite desempaquetar el error original
+func (e *AppError) Unwrap() error {
+	return e.RawError
 }
 
 // ErrorResponse representa la respuesta de error HTTP
@@ -47,12 +60,23 @@ func New(code int, message string) *AppError {
 	}
 }
 
-// WithDetails añade detalles al error
+// WithDetails añade detalles explicativos al error
 func (e *AppError) WithDetails(details string) *AppError {
 	return &AppError{
-		Code:    e.Code,
-		Message: e.Message,
-		Details: details,
+		Code:     e.Code,
+		Message:  e.Message,
+		Details:  details,
+		RawError: e.RawError,
+	}
+}
+
+// Wrap envuelve un error original manteniendo el código y mensaje
+func (e *AppError) Wrap(err error) *AppError {
+	return &AppError{
+		Code:     e.Code,
+		Message:  e.Message,
+		Details:  err.Error(),
+		RawError: err,
 	}
 }
 
@@ -74,5 +98,5 @@ func FromError(err error) *AppError {
 	if appErr, ok := err.(*AppError); ok {
 		return appErr
 	}
-	return ErrInternalServer.WithDetails(err.Error())
+	return ErrInternalServer.Wrap(err)
 }

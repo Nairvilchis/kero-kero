@@ -13,7 +13,7 @@ import platform
 # --- Configuración Base ---
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVER_CMD = ["go", "run", "cmd/server/main.go"]
-API_URL = "http://localhost:8080"
+DEFAULT_LOCAL_URL = "http://localhost:8080"
 QR_FILENAME = "current_qr.png"
 
 # --- Colores ---
@@ -42,11 +42,12 @@ except ImportError:
 
 # --- Server Manager ---
 class ServerManager:
-    def __init__(self):
+    def __init__(self, api_url=DEFAULT_LOCAL_URL):
         self.process = None
         self.running = False
         self.logs = []
         self.log_lock = threading.Lock()
+        self.api_url = api_url
 
     def start(self):
         print_info("Iniciando servidor Kero-Kero (go run cmd/server/main.go)...")
@@ -84,7 +85,7 @@ class ServerManager:
         idx = 0
         while time.time() - start < timeout:
             try:
-                r = requests.get(f"{API_URL}/health", timeout=1)
+                r = requests.get(f"{self.api_url}/health", timeout=1)
                 if r.status_code == 200:
                     print()
                     print_success("Servidor Listo!")
@@ -113,18 +114,10 @@ class ServerManager:
 
 # --- API Client Ultimate ---
 class ApiClient:
-    def __init__(self):
-        self.base = API_URL
-        self.headers = {"Content-Type": "application/json", "X-Api-Key": "kero-kero-api-key"}
-        self._load_env_key()
-
-    def _load_env_key(self):
-        env_path = os.path.join(SERVER_DIR, ".env")
-        if os.path.exists(env_path):
-            with open(env_path, 'r') as f:
-                for line in f:
-                    if line.startswith("API_KEY="):
-                        self.headers["X-Api-Key"] = line.split("=")[1].strip()
+    def __init__(self, base_url, api_key):
+        self.base = base_url
+        self.headers = {"Content-Type": "application/json", "X-Api-Key": api_key}
+        print_info(f"Cliente API iniciado apuntando a: {self.base}")
 
     def _req(self, method, endpoint, data=None):
         url = f"{self.base}{endpoint}"
@@ -402,19 +395,58 @@ def module_groups(api, iid):
 
 # --- Main Loop ---
 def main():
-    server = ServerManager()
-    if not server.start(): return
-    api = ApiClient()
+    clear()
+    print_header("KERO-KERO CLI TESTER")
+    print("Selecciona el modo de operación:")
+    print("1. LOCAL (Inicia servidor local automáticamente)")
+    print("2. REMOTO (Conectar a API existente / Servidor en línea)")
+    
+    mode = prompt("Opción (1/2)")
+    
+    server = None
+    target_url = DEFAULT_LOCAL_URL
+    
+    if mode == '1':
+        server = ServerManager()
+        if not server.start(): return
+    elif mode == '2':
+        url_input = prompt(f"Ingresa URL API (enter para {DEFAULT_LOCAL_URL})")
+        if url_input: 
+            target_url = url_input
+            if target_url.endswith('/'): target_url = target_url[:-1]
+    else:
+        print_error("Opción inválida")
+        return
+
+    # --- API Key Setup ---
+    default_key = "kero-kero-api-key"
+    try:
+        env_path = os.path.join(SERVER_DIR, ".env")
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    if line.startswith("API_KEY="):
+                        default_key = line.split("=")[1].strip()
+                        break
+    except: pass
+
+    print(f"API Key por defecto: {Colors.CYAN}{default_key}{Colors.ENDC}")
+    input_key = prompt("Ingresa API Key (enter para usar defecto)")
+    final_key = input_key if input_key else default_key
+
+    api = ApiClient(target_url, final_key)
     current_iid = None
     
     try:
         insts = api.list_instances()
-        if len(insts) == 1: current_iid = insts[0]['instance_id']
-    except: pass
+        if insts and len(insts) > 0: current_iid = insts[0]['instance_id']
+    except Exception as e:
+        print_error(f"No se pudo conectar o listar instancias: {e}")
     
     while True:
         clear()
         print_header("KERO-KERO ULTIMATE CLI")
+        print(f"Modo: {Colors.BOLD}{'LOCAL' if server else 'REMOTO'}{Colors.ENDC} | API: {target_url}")
         print(f"Instancia Activa: {Colors.CYAN}{current_iid or 'Ninguna'}{Colors.ENDC}")
         print("\n1. Instancias & Privacidad")
         print("2. Mensajería (Polls, Media, Edit)")
@@ -434,14 +466,21 @@ def main():
              # Reusing previous contacts module code logic in new structure or keeping it simple
              print("... (Usa el código del módulo anterior para Contactos) ...")
         elif op == '7':
-             l = api.list_instances()
-             print("Disponibles:", [i['instance_id'] for i in l])
-             current_iid = prompt("ID Instancia")
-             print("\n".join(server.get_logs()[-10:]))
+             try:
+                 l = api.list_instances()
+                 print("Disponibles:", [i['instance_id'] for i in l])
+                 current_iid = prompt("ID Instancia")
+             except: print_error("Error listando instancias")
+             
+             if server:
+                 print("\n".join(server.get_logs()[-10:]))
+             else:
+                 print_info("Logs del servidor no disponibles en modo remoto")
              pause()
         elif op == '0': break
         
-    server.stop()
+    if server:
+        server.stop()
 
 if __name__ == "__main__":
     try: main()

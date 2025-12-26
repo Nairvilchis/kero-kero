@@ -25,7 +25,7 @@ func (h *ChatHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	chats, err := h.service.ListChats(r.Context(), instanceID)
 	if err != nil {
-		log.Error().Err(err).Str("instance_id", instanceID).Msg("Error listing chats")
+		log.Error().Err(err).Interface("details", err).Str("instance_id", instanceID).Msg("Error listing chats")
 		if appErr, ok := err.(*errors.AppError); ok {
 			errors.WriteJSON(w, appErr)
 		} else {
