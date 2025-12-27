@@ -161,7 +161,7 @@ func (r *MessageRepository) GetChatsWithMessages(ctx context.Context, instanceID
 			(SELECT content FROM messages m3 WHERE m3.instance_id = messages.instance_id AND m3.jid = messages.jid ORDER BY m3.timestamp DESC LIMIT 1) as last_message
 		FROM messages
 		WHERE instance_id = $1
-		GROUP BY jid
+		GROUP BY instance_id, jid
 		ORDER BY last_message_time DESC
 	`
 
