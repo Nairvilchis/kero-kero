@@ -37,7 +37,7 @@ func main() {
 	// Inicializar logger
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
 	log.Info().Str("app", cfg.App.Name).Str("env", cfg.App.Env).Msg("Iniciando Kero-Kero WhatsApp API")
-	log.Info().Msg("Usando la version del dia: 26/12/2025 19:36")
+	log.Info().Msg("Usando la version del dia: 27/12/2025 16:21")
 	// Conectar a base de datos
 	db, err := repository.NewDatabase(cfg)
 	if err != nil {

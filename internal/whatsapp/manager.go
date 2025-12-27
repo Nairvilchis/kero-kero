@@ -219,9 +219,19 @@ func (m *Manager) GetOrCreateClient(ctx context.Context, instanceID string) (*Cl
 		return client, nil
 	}
 
+	// Obtener configuración de la instancia para saber si activar SyncHistory
+	instance, err := m.instanceRepo.GetByID(ctx, instanceID)
+	syncHistory := false
+	if err == nil && instance != nil {
+		syncHistory = instance.SyncHistory
+	} else {
+		log.Warn().Str("instance_id", instanceID).Err(err).Msg("No se pudo obtener config de instancia para SyncHistory, usando default false")
+	}
+
 	// Crear dispositivo de WhatsApp
 	device := m.Container.NewDevice()
 	client := NewClient(device, waLog.Stdout("Client-"+instanceID, "INFO", true))
+	client.SyncHistory = syncHistory // Configurar sincronización
 
 	m.Clients[instanceID] = client
 
@@ -230,7 +240,7 @@ func (m *Manager) GetOrCreateClient(ctx context.Context, instanceID string) (*Cl
 		m.handleEvent(ctx, instanceID, evt)
 	})
 
-	log.Info().Str("instance_id", instanceID).Msg("Cliente creado en Manager")
+	log.Info().Str("instance_id", instanceID).Bool("sync_history", syncHistory).Msg("Cliente creado en Manager")
 	return client, nil
 }
 

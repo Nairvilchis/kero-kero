@@ -23,3 +23,9 @@ Este documento registra los cambios, correcciones y mejoras realizadas en el ser
   - **Modo Asíncrono Opcional:** Al incluir el header `X-Async: true` en la petición, el mensaje se encola en Redis y se procesa en segundo plano por workers dedicados. El servidor responde inmediatamente con `202 Accepted` y un ID de cola.
   - **Casos de uso:** El modo asíncrono es ideal para envíos masivos (newsletters, avisos grupales) donde la velocidad es prioritaria sobre la confirmación inmediata.
   - Endpoints soportados: `/messages/text`, `/messages/image`, `/messages/video`, `/messages/audio`, `/messages/document`, `/messages/location`.
+
+## [En Desarrollo] - 2025-12-27
+
+### 🐛 Corregido
+- **Sincronización de Historial**: Se solucionó un bug donde la configuración `SyncHistory` se ignoraba al reconectar o crear clientes en el `Manager`, causando que la sincronización siempre estuviera desactivada ("Omitiendo sincronización"). Ahora se carga correctamente desde la base de datos en `GetOrCreateClient`.
+- **Códigos QR Expirados**: Se redujo el tiempo de vida (TTL) de los códigos QR en Redis de 2 minutos a 45 segundos. Esto evita que los clientes obtengan un QR expirado del caché, asegurando que si el QR almacenado es viejo, el sistema espere a recibir uno nuevo y válido de WhatsApp.

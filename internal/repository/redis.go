@@ -87,7 +87,10 @@ func (r *RedisClient) Exists(ctx context.Context, key string) (bool, error) {
 // SetQRCode almacena un código QR para una instancia
 func (r *RedisClient) SetQRCode(ctx context.Context, instanceID, qrCode string) error {
 	key := fmt.Sprintf("qr:%s", instanceID)
-	return r.Set(ctx, key, qrCode, 2*time.Minute) // QR expira en 2 minutos
+	// Reducimos el TTL a 45 segundos. WhatsApp rota los QRs cada 20-60s.
+	// Si dejamos 2 minutos, el usuario podría obtener un QR expirado desde el caché.
+	// Es preferible que expire y GetQRCode espere uno nuevo del canal de eventos.
+	return r.Set(ctx, key, qrCode, 45*time.Second)
 }
 
 // GetQRCode obtiene el código QR de una instancia
